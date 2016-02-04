@@ -1,0 +1,13 @@
+*~
+*.o
+kx10
+Makefile
+config.cache
+config.h
+config.log
+config.status
+dispatch.c
+i_boole.c
+i_hword.c
+i_skippy.c
+i_txxx.c
