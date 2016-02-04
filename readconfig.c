@@ -24,6 +24,8 @@
 #include <netinet/in.h>
 #include <netinet/if_ether.h>
 #include <netdb.h>
+#include <stdio.h>
+#include <string.h>
 
 /* Size of the constant part of Config_t */
 #define configsize (sizeof (struct _config) - 1)

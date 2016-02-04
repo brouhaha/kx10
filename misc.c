@@ -62,7 +62,7 @@ print_instruction (ir)
     printf ("%o", lower18 (ir));
 
   if (ldb (17, 4, ir))		/* X (index) */
-    printf ("(%o)\r\n", ldb (17, 4, ir));
+    printf ("(%lo)\r\n", ldb (17, 4, ir));
   else
     printf ("\r\n");
 }

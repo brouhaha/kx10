@@ -903,7 +903,7 @@ rmt_send_cmd (unit, cmd)
   if (cc != strlen (cmd))
     {
       if (cc >= 0)
-	fprintf (stderr, "rmt protocol error: command write too short: %d %d\r\n",
+	fprintf (stderr, "rmt protocol error: command write too short: %d %lu\r\n",
 		 cc, strlen (cmd));
       return -1;
     }
@@ -979,7 +979,7 @@ tape_read (unit, buf, len)
     {
       int cc;
 
-      sprintf (buf, "R%d\n", len);
+      sprintf (buf, "R%lu\n", len);
       cc = rmt_send_cmd (unit, buf);
       if (cc < 0)
 	return -1;

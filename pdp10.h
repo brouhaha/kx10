@@ -26,6 +26,7 @@
 #include <setjmp.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 #ifndef SA_RESTART
   /* Needed for SunOS 4.1.x */
