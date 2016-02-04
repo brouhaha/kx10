@@ -1,0 +1,169 @@
+#! /usr/bin/perl
+#
+# CAM, CAI, SKIP, JUMP, AOS, AOJ, SOS, SOJ class instruction generator for
+# kx10, the PDP-10 emulator.
+# Copyright (C) 1995 Stu Grossman
+#
+# This file is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.  */
+#
+
+#
+# This program generates C code for all of the skip, jump and compare
+# instructions.  This is possible because of the regularity of this part of the
+# instruction set.
+#
+
+# Output the file prologue
+
+print '#include "pdp10.h"';
+print "\n\n";
+
+# We generate the instructions in opcode order.
+
+for ($opcode = 0300; $opcode <= 0377; $opcode++) {
+
+# First, parse the opcode
+
+# Operation
+
+    if (($opcode & 070) == 000) {
+	$op = "cai";
+    } elsif (($opcode & 070) == 010) {
+	$op = "cam";
+    } elsif (($opcode & 070) == 020) {
+	$op = "jump";
+    } elsif (($opcode & 070) == 030) {
+	$op = "skip";
+    } elsif (($opcode & 070) == 040) {
+	$op = "aoj";
+    } elsif (($opcode & 070) == 050) {
+	$op = "aos";
+    } elsif (($opcode & 070) == 060) {
+	$op = "soj";
+    } elsif (($opcode & 070) == 070) {
+	$op = "sos";
+    }
+
+    if ($opcode & 010) {
+	$mem_fetch = 1;
+    } else {
+	$mem_fetch = 0;
+    }
+
+    if ($opcode & 040) {
+	if ($opcode & 020) {
+	    $incdec = "s";
+	} else {
+	    $incdec = "a";
+	}
+	$mem_store = $mem_fetch;
+    } else {
+	$incdec = "";
+	$mem_store = 0;
+    }
+
+# Comparison type
+
+    if (($opcode & 07) == 000) {
+	$comp = "";
+    } elsif (($opcode & 07) == 01) {
+	$comp = "l";
+	$compmacro = "lt";
+	$complement = "";
+    } elsif (($opcode & 07) == 02) {
+	$comp = "e";
+	$compmacro = "eq";
+	$complement = "";
+    } elsif (($opcode & 07) == 03) {
+	$comp = "le";
+	$compmacro = "le";
+	$complement = "";
+    } elsif (($opcode & 07) == 04) {
+	$comp = "a";
+    } elsif (($opcode & 07) == 05) {
+	$comp = "ge";
+	$compmacro = "lt";
+	$complement = "!";
+    } elsif (($opcode & 07) == 06) {
+	$comp = "n";
+	$compmacro = "eq";
+	$complement = "!";
+    } elsif (($opcode & 07) == 07) {
+	$comp = "g";
+	$compmacro = "le";
+	$complement = "!";
+    }
+
+# Now, generate the actual C code
+
+# First, the prologue
+    printf "INST(${op}${comp}, 0%o)\n", $opcode;
+    print "{\n";
+
+# Fetch memory if necessary
+
+    if ($mem_fetch) {
+	print "  word36 mem;\n\n";
+	print "  vfetch (ea, mem);\n\n";
+	$what = "mem";
+    } else {
+	$what = "AC";
+    }
+
+# Increment/decrement if necessary
+
+    if ($incdec eq "a") {
+	print "  incr36_flags (${what});\n";
+    } elsif ($incdec eq "s") {
+	print "  decr36_flags (${what});\n\n";
+    }
+
+    if ($mem_store) {
+	print "  vstore (ea, mem);\n";
+    }
+
+# Now do the comparison
+
+    if ($comp eq "a") {
+	if ($op eq "cai" || $mem_fetch) {
+	    print "  incrpc;\n";
+	} else {
+	    print "  setpc (ea);\n";
+	}
+    } elsif ($comp eq "") {
+    } else {
+	if ($op eq "cai") {
+	    print "  if (${complement}c${compmacro}_i (AC, ea))\n    incrpc;\n";
+	} elsif ($op eq "cam") {
+	    print "  if (${complement}c${compmacro} (AC, mem))\n    incrpc;\n";
+	} elsif ($mem_fetch) {
+	    print "  if (${complement}${compmacro}36 (mem))\n    incrpc;\n";
+	} else {
+	    print "  if (${complement}${compmacro}36 (AC))\n    setpc (ea);\n";
+	}
+    }
+
+    if ($op eq "skip" || $mem_store) {
+	print "  if (ac)\n    AC = mem;\n";
+    }
+
+    if ($incdec ne "")
+    {
+	print "  if (pcflags & PC_TRAP1)\n    setflags (0);\n";
+    }
+
+# And, finally the epilogue
+    print "}\n\n"
+}

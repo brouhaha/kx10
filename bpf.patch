@@ -1,0 +1,133 @@
+diff -c orig/bpf.c new/bpf.c
+*** orig/bpf.c	Fri Jul 15 15:32:27 1994
+--- new/bpf.c	Sat Jun 10 16:12:14 1995
+***************
+*** 325,330 ****
+--- 325,331 ----
+  	/* Mark "free" and do most initialization. */
+  	bzero((char *)d, sizeof(*d));
+  	d->bd_bufsize = bpf_bufsize;
++ 	d->bd_sig = SIGIO;
+  
+  	return (0);
+  }
+***************
+*** 436,443 ****
+  			ROTATE_BUFFERS(d);
+  			break;
+  		}
+! 		error = BPF_SLEEP((caddr_t)d, PRINET|PCATCH, "bpf",
+! 				  d->bd_rtout);
+  		if (error == EINTR || error == ERESTART) {
+  			splx(s);
+  			return (error);
+--- 437,447 ----
+  			ROTATE_BUFFERS(d);
+  			break;
+  		}
+! 		if (d->bd_rtout != -1)
+! 			error = BPF_SLEEP((caddr_t)d, PRINET|PCATCH, "bpf",
+! 					  d->bd_rtout);
+! 		else
+! 			error = EWOULDBLOCK; /* User requested non-blocking I/O */
+  		if (error == EINTR || error == ERESTART) {
+  			splx(s);
+  			return (error);
+***************
+*** 493,499 ****
+--- 497,511 ----
+  bpf_wakeup(d)
+  	register struct bpf_d *d;
+  {
++ 	struct proc *p;
++ 
+  	wakeup((caddr_t)d);
++ 	if (d->bd_async && d->bd_sig)
++ 		if (d->bd_pgid > 0)
++ 			gsignal (d->bd_pgid, d->bd_sig);
++ 		else if (p = pfind (-d->bd_pgid))
++ 			psignal (p, d->bd_sig);
++ 
+  #if BSD >= 199103
+  	selwakeup(&d->bd_sel);
+  	/* XXX */
+***************
+*** 779,784 ****
+--- 791,838 ----
+  			bv->bv_minor = BPF_MINOR_VERSION;
+  			break;
+  		}
++ 
++ 
++ 	case FIONBIO:		/* Non-blocking I/O */
++ 		if (*(int *)addr)
++ 			d->bd_rtout = -1;
++ 		else
++ 			d->bd_rtout = 0;
++ 		break;
++ 
++ 	case FIOASYNC:		/* Send signal on receive packets */
++ 		d->bd_async = *(int *)addr;
++ 		break;
++ 
++ /* N.B.  ioctl (FIOSETOWN) and fcntl (F_SETOWN) both end up doing the
++    equivalent of a TIOCSPGRP and hence end up here.  *However* TIOCSPGRP's arg
++    is a process group if it's positive and a process id if it's negative.  This
++    is exactly the opposite of what the other two functions want!  Therefore
++    there is code in ioctl and fcntl to negate the arg before calling here. */
++ 
++ 	case TIOCSPGRP:		/* Process or group to send signals to */
++ 		d->bd_pgid = *(int *)addr;
++ 		break;
++ 
++ 	case TIOCGPGRP:
++ 		*(int *)addr = d->bd_pgid;
++ 		break;
++ 
++ 	case BIOCSRSIG:		/* Set receive signal */
++ 		{
++ 		 	u_int sig;
++ 
++ 			sig = *(u_int *)addr;
++ 
++ 			if (sig >= NSIG)
++ 				error = EINVAL;
++ 			else
++ 				d->bd_sig = sig;
++ 			break;
++ 		}
++ 	case BIOCGRSIG:
++ 		*(u_int *)addr = d->bd_sig;
++ 		break;
+  	}
+  	return (error);
+  }
+diff -c orig/bpf.h new/bpf.h
+*** orig/bpf.h	Tue Jun 28 23:35:54 1994
+--- new/bpf.h	Sat Jun 10 16:12:14 1995
+***************
+*** 121,126 ****
+--- 121,128 ----
+  #define BIOCGSTATS	_IOR('B',111, struct bpf_stat)
+  #define BIOCIMMEDIATE	_IOW('B',112, u_int)
+  #define BIOCVERSION	_IOR('B',113, struct bpf_version)
++ #define BIOCSRSIG	_IOW('B',114, u_int)
++ #define BIOCGRSIG	_IOR('B',115, u_int)
+  #endif
+  
+  /*
+diff -c orig/bpfdesc.h new/bpfdesc.h
+*** orig/bpfdesc.h	Tue Jun 28 23:35:58 1994
+--- new/bpfdesc.h	Sat Jun 10 16:12:14 1995
+***************
+*** 73,78 ****
+--- 73,81 ----
+  	u_char		bd_promisc;	/* true if listening promiscuously */
+  	u_char		bd_state;	/* idle, waiting, or timed out */
+  	u_char		bd_immediate;	/* true to return on packet arrival */
++ 	int		bd_async;	/* non-zero if packet reception should generate signal */
++ 	int		bd_sig;		/* signal to send upon packet reception */
++ 	pid_t		bd_pgid;	/* process or group id for signal */
+  #if BSD < 199103
+  	u_char		bd_selcoll;	/* true if selects collide */
+  	int		bd_timedout;

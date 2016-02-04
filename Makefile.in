@@ -1,0 +1,137 @@
+#
+# Makefile for kx10, the PDP-10 emulator.
+# Copyright (C) 1988, 1989, 1990, 1991, 1992, 1993, 1994, 1995  Stu Grossman
+#
+# This file is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.  */
+#
+
+SHELL= /bin/sh
+
+SRCDIR=@srcdir@
+
+CFLAGS=@CFLAGS@ -I.
+
+CC=@CC@
+
+ETHER_OBJS=@ETHER_OBJS@
+
+.c.o:
+	$(CC) $(CFLAGS) -I$(SRCDIR) -c $<
+
+INSTRS= $(SRCDIR)/i_misc.c $(SRCDIR)/i_arith.c $(SRCDIR)/i_byte.c $(SRCDIR)/i_io.c $(SRCDIR)/i_rh20.c $(SRCDIR)/i_shift.c $(SRCDIR)/i_simple.c $(SRCDIR)/i_skipjump.c $(SRCDIR)/i_stack.c $(GEN_INSTRS)
+GEN_INSTRS= i_boole.c i_hword.c i_txxx.c i_skippy.c
+GENERATOR_SCRIPTS= $(SRCDIR)/gendisp $(SRCDIR)/genboole $(SRCDIR)/genhw $(SRCDIR)/gentxxx $(SRCDIR)/genskipjump
+GEN_SRCS= dispatch.c $(GEN_INSTRS)
+INSTR_OBJS= i_arith.o i_boole.o i_byte.o i_hword.o i_io.o i_misc.o i_rh20.o i_shift.o i_simple.o i_skipjump.o i_skippy.o i_stack.o i_txxx.o
+OBJS= kx10.o loadexe.o pager.o eacalc.o $(INSTR_OBJS) console.o interrupt.o dispatch.o misc.o version.o $(ETHER_OBJS) readconfig.o
+ALL_OBJS=$(OBJS) ether_bpf.o ether_dummy.o ether_netbsd.o ether_snit.o
+
+kx10:	$(OBJS)
+	$(CC) $(CFLAGS) -o kx10 $(OBJS)
+
+dispatch.c:	$(INSTRS) $(SRCDIR)/gendisp
+	perl $(SRCDIR)/gendisp $(INSTRS)
+
+i_boole.c:	$(SRCDIR)/genboole
+	perl $(SRCDIR)/genboole > i_boole.c
+
+i_hword.c:	$(SRCDIR)/genhw
+	perl $(SRCDIR)/genhw > i_hword.c
+
+i_txxx.c:	$(SRCDIR)/gentxxx
+	perl $(SRCDIR)/gentxxx > i_txxx.c
+
+i_skippy.c:	$(SRCDIR)/genskipjump
+	perl $(SRCDIR)/genskipjump > i_skippy.c
+
+pfopen.o: /usr/examples/packetfilter/pfopen.c
+	$(CC) $(CFLAGS) -c /usr/examples/packetfilter/pfopen.c
+
+clean:
+	-rm -f $(ALL_OBJS) kx10 *~
+
+veryclean: clean
+	-rm -f dispatch.c i_txxx.c i_skippy.c i_hword.c i_boole.c
+
+dist:	veryclean $(GENERATOR_SCRIPTS) $(GEN_SRCS)
+	chmod 644 *
+
+$(ALL_OBJS):	$(SRCDIR)/pdp10.h
+
+console.o:	$(SRCDIR)/console.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/console.c
+
+eacalc.o:	$(SRCDIR)/eacalc.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/eacalc.c
+
+ether_bpf.o:	$(SRCDIR)/ether_bpf.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/ether_bpf.c
+
+ether_dummy.o:	$(SRCDIR)/ether_dummy.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/ether_dummy.c
+
+ether_netbsd.o:	$(SRCDIR)/ether_netbsd.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/ether_netbsd.c
+
+ether_snit.o:	$(SRCDIR)/ether_snit.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/ether_snit.c
+
+i_arith.o:	$(SRCDIR)/i_arith.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/i_arith.c
+
+i_byte.o:	$(SRCDIR)/i_byte.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/i_byte.c
+
+i_io.o:	$(SRCDIR)/i_io.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/i_io.c
+
+i_misc.o:	$(SRCDIR)/i_misc.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/i_misc.c
+
+i_rh20.o:	$(SRCDIR)/i_rh20.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/i_rh20.c
+
+i_shift.o:	$(SRCDIR)/i_shift.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/i_shift.c
+
+i_simple.o:	$(SRCDIR)/i_simple.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/i_simple.c
+
+i_skipjump.o:	$(SRCDIR)/i_skipjump.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/i_skipjump.c
+
+i_stack.o:	$(SRCDIR)/i_stack.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/i_stack.c
+
+interrupt.o:	$(SRCDIR)/interrupt.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/interrupt.c
+
+kx10.o:	$(SRCDIR)/kx10.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/kx10.c
+
+loadexe.o:	$(SRCDIR)/loadexe.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/loadexe.c
+
+misc.o:	$(SRCDIR)/misc.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/misc.c
+
+pager.o:	$(SRCDIR)/pager.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/pager.c
+
+version.o:	$(SRCDIR)/version.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/version.c
+
+readconfig.o:	$(SRCDIR)/readconfig.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/readconfig.c

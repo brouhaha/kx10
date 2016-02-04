@@ -1,0 +1,135 @@
+#! /usr/bin/perl
+#
+# Txxx class instruction generator for kx10, the PDP-10 emulator.
+# Copyright (C) 1995 Stu Grossman
+#
+# This file is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.  */
+#
+
+#
+# This program generates C code for all of the (64) bit test (txxx)
+# instructions.  This is possible because of the regularity of this part of the
+# instruction set.
+#
+
+# Output the file prologue
+
+print '#include "pdp10.h"';
+print "\n\n";
+
+# We generate the instructions in opcode order.
+
+for ($opcode = 0600; $opcode <= 0677; $opcode++) {
+
+# First, parse the opcode
+
+# Source operand
+    if (($opcode & 011) == 0) {
+	$src = "r";
+    } elsif (($opcode & 011) == 01) {
+	$src = "l";
+    } elsif (($opcode & 011) == 010) {
+	$src = "d";
+    } elsif (($opcode & 011) == 011) {
+	$src = "s";
+    }
+
+# Modification type
+    if (($opcode & 060) == 0) {
+	$mod = "n";
+    } elsif (($opcode & 060) == 020) {
+	$mod = "z";
+    } elsif (($opcode & 060) == 040) {
+	$mod = "c";
+    } elsif (($opcode & 060) == 060) {
+	$mod = "o";
+    }
+
+# Skip condition
+
+    if (($opcode & 06) == 0) {
+	$skip = "";
+    } elsif (($opcode & 06) == 02) {
+	$skip = "e";
+    } elsif (($opcode & 06) == 04) {
+	$skip = "a";
+    } elsif (($opcode & 06) == 06) {
+	$skip = "n";
+    }
+
+# Now, generate the actual C code
+
+# First, the prologue
+    printf "INST(t${src}${mod}${skip}, 0%o)\n", $opcode;
+    print "{\n";
+
+    if ($src eq "r" || $src eq "l") { # Source is right or left half
+	if ($src eq "r") {
+	    $half = "lower18";
+	} else {
+	    $half = "upper18";
+	}
+
+# Handle test cases
+	if ($skip eq "a") {
+	    print "  incrpc;\n";
+	} elsif ($skip eq "e") {
+	    print "  if (($half (AC) & ea) == 0)\n    incrpc;\n";
+	} elsif ($skip eq "n") {
+	    print "  if (($half (AC) & ea) != 0)\n    incrpc;\n";
+	}
+# Now, set, clear or complement bits as appropriate
+	if ($mod eq "z") {
+	    print "  hw_${src}_clear_bits (AC, ea);\n";
+	} elsif ($mod eq "c") {
+	    print "  hw_${src}_complement_bits (AC, ea);\n";
+	} elsif ($mod eq "o") {
+	    print "  hw_${src}_set_bits (AC, ea);\n";
+	}	
+    } elsif ($src eq "d" || $src eq "s") { # Source is memory or mem swapped
+	print "  word36 mem;\n\n";
+
+	print "  vfetch (ea, mem);\n\n";
+
+	if ($src eq "s") {	# Need to swap the word
+	    $swap = "_swapped";
+	} else {
+	    $swap = "";
+	}
+
+# Handle test cases
+	if ($skip eq "a") {
+	    print "  incrpc;\n";
+	} elsif ($skip eq "e") {
+	    print "  if (!testbits36${swap} (AC, mem))\n    incrpc;\n";
+	} elsif ($skip eq "n") {
+	    print "  if (testbits36${swap} (AC, mem))\n    incrpc;\n";
+	}
+# Now, set, clear or complement bits as appropriate
+	if ($mod eq "z") {
+	    print "  andc36${swap} (AC, mem, AC);\n";
+	} elsif ($mod eq "c") {
+	    print "  xor36${swap} (AC, mem, AC);\n";
+	} elsif ($mod eq "o") {
+	    print "  ior36${swap} (AC, mem, AC);\n";
+	}	
+    } else {
+	printf stderr "Unknown src '$src'.  Aborting.\n";
+	exit 1;
+    }
+
+# And, finally the epilogue
+    print "}\n\n"
+}

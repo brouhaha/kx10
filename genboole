@@ -1,0 +1,265 @@
+#! /usr/bin/perl
+#
+# Boolean class instruction generator for kx10, the PDP-10 emulator.
+# Copyright (C) 1995 Stu Grossman
+#
+# This file is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.  */
+#
+
+#
+# This program generates C code for all the boolean instructions.  This is
+# possible because of the regularity of this part of the instruction set.
+#
+
+# Output the file prologue
+
+print '#include "pdp10.h"';
+print "\n\n";
+
+# Some defs to make life easier
+
+print '#define andca36(DEST, AC, MEM) andc36 (DEST, AC, MEM)
+#define andca36_imm(DEST, AC, IMM) andc36_imm (DEST, AC, IMM)
+#define andcm36(DEST, AC, MEM) andc36 (DEST, MEM, AC)
+#define andcm36_imm(DEST, AC, IMM) and36_cimm (DEST, AC, IMM)
+
+#define orca36(DEST, AC, MEM) orc36 (DEST, AC, MEM)
+#define orca36_imm(DEST, AC, IMM) orc36_imm (DEST, AC, IMM)
+#define orcm36(DEST, AC, MEM) orc36 (DEST, MEM, AC)
+#define orcm36_imm(DEST, AC, IMM) or36_cimm (DEST, AC, IMM)
+
+';
+
+# We generate the instructions in opcode order.
+
+for ($opcode = 0400; $opcode <= 0477; $opcode++)
+{
+
+# First, parse the opcode
+
+# Operation
+
+  $const = "";
+
+  $fetch_mem = 1;
+  $copy_mem = 0;
+  $copy_ac = 0;
+
+  if (($opcode & 074) == 000)
+    {
+      $op = "setz";
+      $const = "0";
+      $fetch_mem = 0;
+    }
+  elsif (($opcode & 074) == 004)
+    {
+      $op = "and";
+    }
+  elsif (($opcode & 074) == 010)
+    {
+      $op = "andca";
+    }
+  elsif (($opcode & 074) == 014)
+    {
+      $op = "setm";
+      $copy_mem = 1;
+    }
+  elsif (($opcode & 074) == 020)
+    {
+      $op = "andcm";
+    }
+  elsif (($opcode & 074) == 024)
+    {
+      $op = "seta";
+      $fetch_mem = 0;
+      $copy_ac = 1;
+    }
+  elsif (($opcode & 074) == 030)
+    {
+      $op = "xor";
+    }
+  elsif (($opcode & 074) == 034)
+    {
+      $op = "ior";
+    }
+  elsif (($opcode & 074) == 040)
+    {
+      $op = "andcb";
+    }
+  elsif (($opcode & 074) == 044)
+    {
+      $op = "eqv";
+    }
+  elsif (($opcode & 074) == 050)
+    {
+      $op = "setca";
+      $fetch_mem = 0;
+    }
+  elsif (($opcode & 074) == 054)
+    {
+      $op = "orca";
+    }
+  elsif (($opcode & 074) == 060)
+    {
+      $op = "setcm";
+    }
+  elsif (($opcode & 074) == 064)
+    {
+      $op = "orcm";
+    }
+  elsif (($opcode & 074) == 070)
+    {
+      $op = "orcb";
+    }
+  elsif (($opcode & 074) == 074)
+    {
+      $op = "seto";
+      $const = "HWORDMASK";
+      $fetch_mem = 0;
+    }
+
+# Get the mode
+
+  $imm = "";
+  $source = "mem";
+  if (($opcode & 03) == 0)
+    {
+      $mode = "";
+      $dest = "AC";
+    }
+  elsif (($opcode & 03) == 01)
+    {
+      $mode = "i";
+      $imm = "_imm";
+      $source = "ea";
+      $dest = "AC";
+      $fetch_mem = 0;
+    }
+  elsif (($opcode & 03) == 02)
+    {
+      $mode = "m";
+      $dest = "mem";
+    }
+  elsif (($opcode & 03) == 03)
+    {
+      $mode = "b";
+      $dest = "mem";
+    }
+
+# Now, generate the actual C code
+
+# First, the prologue
+  printf "INST(${op}${mode}, 0%o)\n", $opcode;
+  print "{\n";
+
+  if (($fetch_mem || $dest eq "mem") && !$copy_ac)
+    {
+      printf "  word36 mem;\n\n";
+    }
+
+  if ($fetch_mem)
+    {
+      if (!$copy_mem)
+	{
+	  printf "  vfetch (ea, mem);\n\n";
+	}
+      else
+	{
+	  printf "  vfetch (ea, ${dest});\n";
+	}
+    }
+
+  if ($const ne "")
+    {
+      printf "  dpb (17, 18, ${const}, ${dest});\n";
+      printf "  dpb (35, 18, ${const}, ${dest});\n";
+    }
+  elsif ($op eq "and" || ${op} eq "andca" || $op eq "andcm" || $op eq "andcb" || $op eq "xor"
+	 || $op eq "ior" || $op eq "eqv" || $op eq "orca" || $op eq "orcm" || $op eq "orcb")
+    {
+      if ($op eq "andcb")
+	{
+	  $op = "nor";
+	}
+      elsif ($op eq "orcb")
+	{
+	  $op = "nand";
+	}
+
+      print "  ${op}36${imm} (${dest}, AC, ${source});\n";
+    }
+  elsif ($op eq "setm")
+    {
+      if ($mode eq "i")
+	{
+	  print '
+  /* This is actually xmovei.  */
+
+  dpb (5, 6, 0, AC);		/* Clear out unused bits */
+  dpb (35, 30, ea, AC);		/* Stash the global address */
+
+  /* if we are in a non-zero section, and ea references an ac, then section
+   * number is set to 1 */
+
+  if (pcsection && is_acref(ea))
+    dpb(17, 18, 1, AC);
+';
+	}
+    }
+  elsif ($op eq "seta")
+    {
+    }
+  elsif ($op eq "setca")
+    {
+      printf "  not36 (${dest}, AC);\n";
+    }
+  elsif ($op eq "setcm")
+    {
+      if ($mode eq "i")
+	{
+	  print "  dpb (17, 18, HWORDMASK, AC);\n";
+	  print "  dpb (35, 18, ~ea, AC);\n";
+	}
+      else
+	{
+	  printf "  not36 (${dest}, mem);\n";
+	}
+    }
+  else
+    {
+      print stderr "Unknown op '$op'.  Aborting.\n";
+      exit 1;
+    }
+
+  if ($mode eq "m" || $mode eq "b")
+    {
+      if ($copy_ac)
+	{
+	  printf "  vstore (ea, AC);\n";
+	}
+      else
+	{
+	  printf "\n  vstore (ea, ${dest});\n";
+
+	  if ($mode eq "b")
+	    {
+	      printf "\n  AC = mem;\n";
+	    }
+	}
+    }
+
+# And, finally the epilogue
+  print "}\n\n"
+  }

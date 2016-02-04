@@ -1,0 +1,59 @@
+dnl Process this file with autoconf to produce a configure script.
+AC_INIT(pdp10.h)
+
+AC_CONFIG_HEADER(config.h)
+
+AC_CANONICAL_HOST
+
+dnl Checks for programs.
+AC_PROG_CC
+
+dnl Checks for libraries.
+
+dnl Checks for header files.
+AC_HEADER_STDC
+AC_CHECK_HEADERS(fcntl.h sgtty.h sys/file.h sys/ioctl.h sys/time.h termio.h unistd.h)
+
+dnl Set system dependent compiler options
+
+case ${CC}X${host_os} in
+ccXirix*) CFLAGS="-O -woff 848 -common" ;;
+cc*) CFLAGS=-O ;;
+esac
+
+dnl System dependent options
+
+case ${host_os} in
+irix*)
+	AC_DEFINE(USE_STREAMS)
+	AC_DEFINE(_BSD_COMPAT)
+	ETHER_OBJS=ether_dummy.o
+	;;
+netbsd* | bsdi* | freebsd*) ETHER_OBJS=ether_netbsd.o ;;
+osf*)	ETHER_OBJS="ether_bpf.o pfopen.o" ;;
+sunos*)	ETHER_OBJS=ether_snit.o ;;
+solaris*)
+	AC_DEFINE(USE_STREAMS)
+	ETHER_OBJS=ether_dummy.o
+	;;
+*)	ETHER_OBJS=ether_dummy.o ;;
+esac
+
+AC_SUBST(ETHER_OBJS)
+
+dnl Checks for typedefs, structures, and compiler characteristics.
+AC_C_CONST
+AC_C_INLINE
+AC_TYPE_OFF_T
+AC_TYPE_SIZE_T
+AC_HEADER_TIME
+AC_STRUCT_TM
+
+dnl Checks for library functions.
+AC_FUNC_ALLOCA
+AC_PROG_GCC_TRADITIONAL
+AC_FUNC_MEMCMP
+AC_TYPE_SIGNAL
+AC_CHECK_FUNCS(gettimeofday select socket strtol)
+
+AC_OUTPUT(Makefile)

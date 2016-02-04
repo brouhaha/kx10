@@ -1,0 +1,661 @@
+Mon Feb  5 09:07:09 1996  Stu Grossman  (grossman@andros.cygnus.com)
+
+	* console.c (input_interrupt):  Changes to status output (^T).
+	Block signals for duration of status, don't print icount and
+	intcount.  Print interrupt system status.
+	* ether_netbsd.c (send_packet):  Fixup for packet printing code.
+	* i_arith.c (dp_float_sub):  Preliminary version of dp floating
+	add/subtract code.  Commented out for now.
+	* i_byte.c (ibp):  Implement adjbp of owgps.
+	* (move_string):  Add support for movso, movsrj.  Clean up
+	code.
+	* i_io.c (datao pag):  Only clear page table if PAGLOADUBA.  Set
+	clearall based on PAGSAVEKEPT.
+	* (cono mtr):  Turn off interrupts while messing with mtrconi.
+	Make sure to clean up pending interrupts.
+	* i_misc.c (unimp):  Fixup extend opcode message.
+	* (uuo):  Check trapflags, not pcflags for trap bits.
+	* (pmove, pmovem):  Make sure I/O is legal, uuo otherwise.
+	* (extend):  Fixup calls for movso and movsrj.
+	* (jrst):  Handle insns which set trap flags to make sure that
+	trap occurs at the right time, and that page faults are handled
+	correctly.  This affects jen, jrstf, xjrstf, xjen, and xpcw.
+	* i_rh20.c (min):  Move to pdp10.h.
+	* (process_receive_packet):  Fix packet printing code.
+	* interrupt.c (print_interrupts):  New routine to print interrupt
+	system status (used by ^\^T).
+	* (print_sigprocmask):  New routine to print the process's signal
+	mask.
+	* (handle_interrupt):  Only turn off USER and PUBLIC when jsp is
+	used as an interrupt insn.  Inline jsr.
+	* kx10.c (execute):  Add another sample test for trapping on
+	certain processor conditions.
+	* pager.c (setflags):  Move TRAP1 and TRAP2 flags from pcflags to
+	trapflags.  This ensures that the trap flags in pcflags are 0 when
+	the trap instruction is executed.
+	* (hard_fault):  Handle faults for KI pager mode.  Combine
+	trapflags and pcflags when storing fault info.  Don't back up PC
+	when taking a fault during a jump insn that sets the trap flags
+	(ie: setting_pc is on).
+	* (page_fault):  KI paging mode fixes:  Always set KEEP bit.  Pass
+	SOFT bit to tlb.
+	* (map):  Return correct format map data for KI mode paging.
+	* pdp10.h:  Define trapflags.  Get rid of PAGxxxB (bit number)
+	forms of pager flags.  Change PAGCLEARALL to PAGSAVEKEPT to
+	reflect proper usage of the bit.  Define PF_SOFT for KI pager.
+	Add def for lshift36.  Correct overflow calculation for
+	INTERNAL_SUB36_FLAGS.  Make add36const handle signed constants.
+	Add def of min.
+
+	* ether_snit.c (send_packet):  Swap args for memcpy.  Found by Bjorn
+	Victor.
+
+	* General arith/stack trap handling fixes.
+
+	First, make sure that trap flags are OFF when executing the trap
+	insn.  This ensures that the saved flags will have TRAP1 and TRAP2
+	off so that execution may continue after restoring the flags.
+	This is done by keeping the trap flags in a seperate variable
+	called trapflags, and making sure that pcflags always have the
+	trap flags off.
+
+	Second, make sure that the trap flags are saved if the trap insn
+	gets a page fault or interrupt.  This is to ensure that the trap
+	gets sprung when returning back to the program.  This is somewhat
+	in conflict with the first goal, hence the need to maintin the
+	trapflags variable across the trap insn execution in case we get a
+	fault.  The flags saved by the fault are the combined trapflags
+	and pcflags.
+
+	Third, make setting of trap flags via jrstf and similar insns
+	spring the trap appropriately.  This would seem to mean
+	incrementing the PC by one (presumably, the target PC is pointing
+	at the arithmetic insn that originally caused the trap), and
+	executing the trap insn so that fault continuation would work
+	as though the fault had never happened.  However, the KL does
+	things differently, and executes the trap insn with PC pointing at
+	the insn that caused the trap.  This seems wrong, but the KL
+	implementation is the final authority in these matters.
+
+	Fourth, make sure that insns that can set the PC and the trap
+	flags (jrstf, etc...) save the correct PC if the insn faults.
+	This is the PC of jump target (and, presumably points at the
+	arithmetic insn that originally set the trap flags).  This is
+	implemented by having all the flag setting jump insns set a global
+	var called setting_pc, and prevents hard_fault from backing up the
+	PC.
+
+	* version.c:  Bump version to 0.94.
+
+Tue Dec 12 17:05:16 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* Makefile.in, readconfig.c, pdp10.h:  New module, readconfig.c,
+	reads config files.  Add prototypes and data types to pdp10.h.
+	* configure.in:  Solaris support.
+	* console.c:  Remove all code under OLDTTY.
+	* (read_from_console):  Document hack needed for OSF1 (DEC/Alpha).
+	* (console_init):  Get rid of fstat code.  Cleanup switch into
+	non-blocking and async modes w.r.t. USE_STREAMS.
+	* console.c (dte_doorbell dte_interrupt), i_io.c (cono pi):
+	Change sigblock and sigsetmask to POSIX sigprocmask.  Needed for
+	Solaris.
+	* pdp10.h (BLOCKEDSIGS):  Change to accomodate sigprocmask.
+	* eacalc.c (efiw_eacalc Ieacalc jrstfeacalc), i_misc.c (xct),
+	interrupt.c (many), kx10.c (execute), pager.c (hard_fault):
+	Change _setjmp and _longjmp to POSIX sigsetjmp and siglongjmp,
+	which have unambiguous behavior w.r.t. signal handling.
+	* pdp10.h:  Change to_main from jmp_buf to sigjmp_buf to match
+	sigsetjmp and siglongjmp.
+	* ether_netbsd.c (init_ether):  Use new config scheme to get IP
+	address.
+	* ether_snit.c:  Reformat according to coding standard.  Make some
+	things static.
+	* i_byte.c (ibp):  Print PC of offending insn when trying to
+	decrement a OWGBP.
+	* (compare_strings):  Document VM behavior a little bit better.
+	* (movst):  Change name to move_string.  Start adding support for
+	all string movement insns (movslj, movsrj, movso, movst).  Change
+	src_len and dst_len from word36 to int's (this is possible because
+	they are limited to 27 bits).
+	* i_io.c (io_init):  Add code to initialize blockedsigs.
+	* (blki apr (aprid)):  Formatting.
+	* (datao pag), pdp10.h:  Speedup bit tests.  Pass PAGCLEARALL to
+	clear_tlb to flush kept entries.
+	* i_misc.c (extend):  Make movslj and movst call move_string.
+	* i_rh20.c (tape_func):  Add support for `rewind and unload' op.
+	* (process_receive_packet load_protocol_table):  Remove IP and ARP
+	specific support.  Just go through protocol list supplied by the
+	OS.  This removes the need to include <netinet/if_ether.h>, which
+	doesn't exist on Linux.
+	* kx10.c (handle_fpe):  Just call genunimp.  This shouldn't happen
+	anymore.
+	* (main):  Open config file `kx10.config' here.
+	* pdp10.h:  Default NBBY for Linux, which doesn't define it in the
+	usual place.
+
+Wed Nov 29 01:15:24 1995  Bjorn Victor  (Bjorn.Victor@DoCS.UU.SE)
+
+	* pager.c (hard_fault):  Fix test for KL paging that makes Tops-10
+	paging store PC in the wrong place.
+
+Thu Nov 16 09:12:34 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* version.c:  Update version to 0.93.
+
+Tue Nov 14 16:28:22 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* config.h.in configure configure.in:  See if compiler supports
+	function inlining.
+	* console.c (dte_doorbell):  Support KLDCP functions 3 and 4 (End
+	of program, and End of pass indications).  Also make switches
+	always read as 0405.
+	* eacalc.c (efiw_eacalc Ieacalc jrstfeacalc):  Check for case 11
+	illegal indirect word.
+	* gendisp:  Don't handle opcode 0247 special.  Move it into
+	i_misc.c.
+	* i_arith.c (multiply):  Make static.  Add prototype.  Handle
+	overflow.  Return 0 or 1 depending on overflow.
+	* (divide):  Add prototype.  Fixup doc.  Handle negative numbers.
+	* New insns:  fix, fadm, fadb, fadri, fadrm, fsb, fsbm, fsbb,
+	fsbrm, fsbrb, fmp, fmpm, fmpb, fpmrm, fmprb, fdv, fdvm, fdvb,
+	fdvrm, fdvrb, idivb, divm and divb.
+	* Add stubs for gfab, gfsb, gfmp, gfdv, dmul, and ddiv.
+	* Make ufa, dfn, fadl, fsbl, fmpl, and fdvl be uuos.
+	* Cleanup and consolidate all floating-point operations.  Fix many
+	bugs.  All single-precision stuff now occurs in four routines:
+	float_addsub, float_multiply, float_divide, and fix.  These are
+	inlined for speed (when the compiler supports it).
+	* Also, finish up all single precision integer insns.  Now all
+	division goes through divide.  Overflow and divide by zero are now
+	handled correctly.
+	* i_byte.c (increment_bp loadstore_bp increment_loadstore_bp
+	increment_bp_2wg loadstore_bp_2wg increment_loadstore_bp_2wg
+	FONDLE_BP):  EA2 needs to be passed down to 2wgp routines in order
+	to increment it correctly if it's a lfiw (18 bit ea instead of 30
+	bit ea)..
+	* (ibp_2wgp ildb_2wgp idpb_2wgp):  Ditto.
+	* (compare_strings movst):  Bomb out if source or dest lengths are > 27
+	bits.  This is what the architecture demands, and it simplifies a
+	lot of things.
+	* (compare_strings movst):  Fix call to internal_ldb (to load fill
+	byte).  It uses shift count instead of bit number.
+	* (compare_strings):  Use unsigned comparisons.  Also, make cmpsle
+	and cmpsge return correct result if strings are equal.
+	* i_io.c (io_init):  Setup pagerconi to Tops-10 or TOPS-20 paging
+	according to what user requested (via -t option).  Initialize
+	pagerdataihigh to have 3 high order bits on.  Also, declare 774 as
+	a non-existent device.
+	* (SPECIAL_INST (io)):  Make I/O illegal in supervisor mode.
+	* (cono apr,):  If changing PIA, make sure to clear any pending
+	interrupts on the old level.  Also, clear takes precedence over set.
+	* (blki apr, (aprid)):  Indicate internal channel (CBUS, as
+	opposed to I/O bus (RH10) channel).
+	* (datai apr,):  Returns 0 cuz we don't support address breaks.
+	* (cono pag,):  Print message when switching between Tops-10 and
+	TOPS-20 paging.
+	* i_misc.c (uuo):  Add Tops-10 support.
+	* (luuo):  Add non-zero section support (extended luuo blocks).
+	* (uuo101 uuo247):  Make these be uuos (as opposed to unimps).
+	* (extend):  Add place holders for edit, cvtdbo, cvtdbt, cvtbdt,
+	movso, movslj, movsrj.
+	* (portal):  Make portal set or clear PC_PUBLIC according to map.
+	This is not really correct, but it makes certain things work better.
+	* (jrstf xjrstf xjen xpcw):  Trap if new flags have trap0 or trap1
+	set.
+	* (jen):  New insn.
+	* (halt):  Not legal in supervisor mode.  Also print out coni pi,
+	and interrupt stuff when halting.
+	* (xjrstf):  Use 30 bits for PC.
+	* (xjen):  Disentangle from xjrstf.  Only legal in kernel mode.
+	This simplifies some logic regarding the loading of prev context
+	ACs and section.
+	* (xpcw):  Get rid of doing_interrupt_inst logic.
+	* (jrst 10,):  New insn.  Just dismisses interrupt level without
+	doing a jump.
+	* (jsp):  Make sure unused fields in AC are zero.
+	* i_rh20.c (datao_rh20):  Make access to sbar write reg five
+	immediately instead of deferring till channel start.  Writing stcr
+	no longer needs to write reg five anymore.
+	* i_simple.c (dadd):  Use add72_flags to set flags.
+	* (dsub):  I can't do normal subtraction here because it gets the
+	flags wrong!  Instead, I have to negate the words manually (using
+	not36 and incr72_flags), and then add them using add72_flags.
+	* (dmove dmovem):  Save both words before writing them out.  This
+	is necessary to make overlapping xfers work right.
+	* (dmovn dmovnm):  Negate words manually (see dsub above for
+	explanation).
+	* i_stack.c (pushj push pop popj):  Set GLOBAL flag for 30 bit
+	stack pointers.
+	* interrup.c (handle_interrupt):  Get rid of doing_interrupt_inst
+	mechanism.  We now inline code to handle various interrupt
+	instructions.  This is both faster, and removes a special case
+	from xpcw.  Currently, we only support xpcw, blki/blko, most
+	normal skip insns (txxx, camx, skipx, aosx, and sosx), and jsp.
+	* kx10.c (main):  Add -t option to use Tops-10 paging.
+	* misc.c (print_instruction):  Fix spelling cvsbdt->cbtbdt.
+	* pager.c (hard_fault):  Make pageinfo be unsigned int.  Make sure
+	that PF_HARD is off when detecting nxm.  Add Tops-10 paging
+	support.
+	* (illegal_indirect_trap):  Handler for efiw 11 case.  Must be
+	here because this causes a special type of page fail (not the way
+	I would have done it...)
+	* (update_cst):  Make pagenum be unsigned int.  Also, make sure
+	that pager is enabled and in TOPS-20 mode before doing anything.
+	* (page_fault):  pagenum and page are unsigned int.  Add support
+	for Tops-10 page tables.
+	* (map clrpt read_refill write_refill Vfetch_i Vfetch Vstore
+	Vfetch_ea Vfetch_1 Vstore_1 Vfetch_2 Vstore_2):  pageinfo and
+	pagenum are unsigned int.
+	* (Vfetch_i):  Make sure addr isn't out of bounds.
+	* pdp10.h (INTERNAL_ADD72_FLAGS):  Consolidate all 72 bit addition
+	in here.
+	* (add72 add72_flags):  Remove flags support from add72.  Use
+	INTERNAL_ADD72_FLAGS to implement add72_flags.
+	* (incr72_flags):  Implement using INTERNAL_ADD72_FLAGS.
+	* (add72_flags sub72):  Don't set overflow if in exec mode!!!
+	Yes, the machine really depends on this because bit 0 of the PC
+	flags is shared between overflow and previous context public when
+	in exec mode!
+	* (neg72):  Reformat.
+	* (cltu):  New macro.  Does unsigned comparison of two word36s.
+	Returns true if first word is < second word, false otherwise.
+
+Sun Sep 24 22:58:43 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* config.h.in configure.in:  Move defs of USE_STREAMS and
+	_BSD_COMPAT from command line to config.h.
+	* i_rh20.c (init_tape init_disk tape_func disk_func):  Compute
+	attn summary bit based on unit number.
+	* (init_tape tape_func):  Get rid of lastfilepos.
+	* (tape_func):  Use lseek to simulate record spacing operations.
+	* version.c:  Bump version to 0.92.
+
+Sun Sep 24 16:35:54 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* Makefile Makefile.in config.guess config.h.in config.sub configure
+	configure.in install-sh:  Autoconfiscation process.
+	* Makefile:  Rename to Makefile.in.  Fixup lots of things to
+	support srcdir builds, and autoconfiguration.  Remove `tar' target
+	and add `veryclean' and `dist' targets.
+	* console.c (console_reset console_init):  IRIX support.
+	* (dte_doorbell):  Add more KLDCP support for reading the switches
+	and cpu-clock settings.  Also, increase pause time for buffered input.
+	* ether_snit.c (get_packet):  Fixup char vs. unsigned char snits.
+	* i_arith.c (fltr fad idiv idivi idivm):  Make unimplemented
+	functionality act like a UUO, rather than halting kx10.
+	* i_io.c i_rh20.c:  Remove include of malloc.h.  Why was it there in the
+	first place?
+	* (no_device):  New routine to setup correct behavior for
+	non-existent devices.  i_blkio_nodev is a new routine to simulate
+	blki/blko to a non-existent device.  Also get rid of dummy
+	routines for non-ex devices, since no_device handles all this now.
+	* (cono mtr,):  Irix support.  Use sigaction() instead of signal()
+	so we can prevent EINTR's.  Also, use SIG_IGN instead of NULL when
+	turning off SIGALRM.
+	* i_misc.c (jrst):  Handle jrst 1, (also known as portal).  Also,
+	make unimplemented jrst codes act like UUOs.
+	* i_rh20.c:  Conditionalize inclusion of alloca.h.   Get rid of
+	dummy routines for rh's that don't exist.
+	* i_simple.c (dadd, dsub, dmovn):  Check for trap1.
+	* kx10.c (handle_fpe):  Make divide by zeros in the emulator act
+	like UUOs instead of halting kx10.
+	* (main):  Clean up option processing a bit.  Allow the loading of
+	multiple executables.  Announce the start address.
+	* loadexe.c:  Add A10 reader.
+	* pdp10.h:  Move config stuff into config.h.in.
+	* Get rid of alpha-specific definition of word36.  That def can be
+	used by all hosts.
+	* (INTERNAL_SUB36_FLAGS):  Change overflow calculation slightly to
+	use fewer cycles.
+	* (add72 sub72):  Add flags support.
+
+Tue Sep 12 08:08:19 1995  Bjorn Victor  (Bjorn.Victor@DoCS.UU.SE)
+
+	* i_io.c (datai tim,):  Redo calculations to improve accuracy and
+	number of bits.
+
+Tue Sep 12 18:04:10 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* console.c (read_clock):  Uncorrect for DST.  WAITS does DST
+	corrections itself.  Also, add support for a non ept-relative
+	communications scheme (such as used by KLDCP).
+	* i_rh20.c (rmt_read):  Return value when hitting bottom of func.
+	* kx10.c (execute):  Add sample code for PC range test.
+	* pdp10.h (ALSHIFT):  Fix bug with ash left shift > 35.
+	* (INTERNAL_SUB36_FLAGS):  SunOS C compiler can't hack
+	continuation lines in the middle of arg lists.
+	* Add prototypes for various functions.
+	* version.c:  Bump version to 0.915.
+
+Tue Sep 12 01:19:07 1995  Bjorn Victor  (Bjorn.Victor@DoCS.UU.SE)
+
+	* ether_snit.c:  Add support for SunOS network interface.
+	* i_arith.c (fsc, fadrb, fmpri):  New instructions.
+
+Mon Sep 11 23:14:00 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* Makefile, genboole:  New perl script genboole to generate 400
+	series instructions.
+	* i_shift.c:  Remove all 400 series insns.  They are now generated
+	by genboole.
+	* gentxxx, i_shift.c, pager.c pdp10.h:  Change andc36, xor36 and
+	ior36 to three address format.  Change or36 to ior36.
+	* gendisp:  Opcode 247 is a uuo.
+	* i_arith.c (multiply):  Change some longs to ints to fix bug with
+	multiplying 2^35-1 by itself.
+	* (mulm, mulb):  New insns.
+	* (idivm):  Fix error message.
+	* console.c (input_interrupt):  Print out pc trace for q command.
+	* i_misc.c (jrst):  Make halt print out pc trace.
+	* i_shift.c (ash):  Don't futz with shiftamount.  Let ashift macro
+	handle it.
+	* kx10.c (execute):  Add code to reduce PC history to just user mode.
+	* misc.c (i_trace):  Clean up PCHIST and PROCESS_TRACING conditionals.
+	* pdp10.h:  Get rid of __CONCATx macros.  Fix up shift, LSHIFT,
+	and RSHIFT to meet coding standards.  Break ashift into	ARSHIFT,
+	and ALSHIFT to make life easier.  Also, handle shift amounts < -35
+	or > 35.  Also, generate overflow/trap flags when necessary.
+	* Redo all boolean functions to use three address format.  Create
+	_imm forms to make immediate mode insns more efficient.
+
+Mon Sep 11 08:33:06 1995  Bjorn Victor  (Bjorn.Victor@DoCS.UU.SE)
+	* eacalc.c (efiw_eacalc):  Fix test for global/local address
+	format.
+
+Sat Sep  9 08:53:01 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* version.c:  Update copyright, and bump version up to 0.91.
+	* pdp10.h, console.c, eacalc.c, ether_netbsd.c, gendisp,
+	i_arith.c, i_byte.c, i_io.c, i_misc.c, i_rh20.c, i_shift.c,
+	i_simple.c, i_skipjump.c, i_stack.c, interrupt.c, kx10.c, misc.c,
+	pager.c:  Update copyrights.
+
+	* genskipjump, i_arith.c, i_simple.c:  Add support for cry0, cry1,
+	and ovf flags, and overflow trapping to addx, subx, aosx, aojx,
+	sosx, and sojx instructions. 
+	* i_byte.c (*_2wg macros):  Turn on TWGBP bit.
+	* i_misc.c (jsr, jsp), i_stack.c (pushj):  Clear fpd, trap1,
+	trap2, and afi flags.
+	* i_rh20.c (rmt_read, tape_read):  Change (void *) to (unsigned
+	char *) to shut up picky C compilers.
+	* i_simple.c:  New instruction, movmi.
+	* pdp10.h:  Add defs for pc flags fpd and afi so we can clear them
+	in subroutine call insns.
+	* New macros add36_flags, add36_imm_flags, incr36_flags,
+	sub36_flags, sub36_imm_flags, neg36_flags, and decr36_flags that
+	compute cry0, cry1, and ovf.
+
+Wed Aug 30 12:51:15 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* i_byte.c:  Massive cleanups to consolidate byte-pointer
+	incrementing and parsing.  Also, speed up ldb/ildb by doing simple
+	shift and mask ops.
+	* pdp10.h:  Make INST, IO_INST, and SPECIAL_INST use CONCAT macro
+	instead of having seperate versions for Ansi and traditional C.
+	* New macros `mask36' and `rshift' to speed up byte pointer
+	processing.
+	* Makefile.in (ALL_OBJS):  Add ether_dummy.o so that make clean
+	gets it.
+
+Tue Aug 29 22:33:47 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* console.c (console_reset):  Restore fcntl(F_SETFL) to restore fd
+	flags.  Only SunOS seems to need this.
+	* (write_to_console):  Fix endian bug with arg c.
+	* (input_interrupt):  Shutdown uses location 30, not 20.  Change
+	shutdown command from `2' to `s'.
+	* (console_init):  Do F_SETOWN to be sure that emulator process
+	gets SIGIOs.  Fixes SunOS hanging problem.
+	* i_arith.c (multiply):  Copy sign bit from high-order word to
+	low-order word, instead of using sign variable.  This fixes a
+	problem with multiplying by 0.
+	* i_io.c:  Add dummy datao and cono for ANI and ANI2 devices.
+	* i_shift.c (ash, ashc):  If shift amount is 0, just leave things
+	alone.  This prevents copying of sign bits which would normally
+	occur.
+
+Fri Aug 25 07:29:34 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* i_shift.c (rotc):  Handle rotates > 36 properly.
+
+Wed Aug 23 04:05:51 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* Makefile, genhw, genskipjump, gentxxx:  New perl scripts to
+	generate C code for certain classes of instructions.  Replaces
+	many hand coded routines.
+	* console.c:  Don't use fd 0.  Explicitly open /dev/tty and put
+	new fd into console_fd.  This leaves the tty in a better state if
+	the emulator crashes.
+	* (write_to_console dte_doorbell):  Fix bug with losing output due
+	to lack of handling of EWOULDBLOCK.  Consolidate output code.
+	* (console_init alarm_ms):  Switch to SIGVTALRM.  This lets the
+	main clock simulation routines use SIGALRM which has better
+	real-time accuracy.
+	* ether_netbsd.c (get_packet pfopen):  Improve error messages and
+	error handling.
+	* gendisp:  Make opcode 0 be a UUO.  Print out the number of
+	implemented and unimplemented instructions.
+	* i_arith.c:  New instruction: idivb.
+	* i_io.c (cono mtr,):  Switch from SIGVTALRM to SIGALRM to improve
+	real time accuracy (somewhat).
+	* Add stubs for unsupported devices:  CDP, TTY, DTE[123].
+	* i_misc.c (xct), interrupt.c (handle_interrupt), kx10.c
+	(start_address), misc.c (i_trace), pager.c (setflags hard_fault):
+	Per-process instruction/event tracing facility which can activated
+	by special instruction.
+	* i_rh20.c:  Start adding support for rmt tape protocol.
+	* (tape_func):  Add ioctls to support tape rewind, space forward,
+	space backward, and other device control operations.
+	* (tape_func):  Handle channel programs better to allow non-page
+	aligned transfers.  Also, limit record size to 518 words to make
+	dumper happy.
+	* i_shift.c (ash, rotc, lshc):  Reduce shift count to mod 36 or 72
+	as appropriate.
+	* i_simple.c:  New instructions: setm, andcb, orca, orcmi, orcb.
+	* Get rid of halfword instructions.  They are now generated by
+	genhw.
+	* i_skipjump.c:  Get rid of compare, skip, txxx and jump
+	instructions. They are now generated by genskipjump, and gentxxx.
+	* misc.c (print_instruction):  New routine to centralize
+	instruction printing.
+	* pdp10.h:  New macro SXHW to sign-extend halfwords efficiently.
+	Use this to re-implement SXHI.
+	* (LDB):  Avoid unnecessary mask operations for halfword loads.
+	* (hw_*):  New macros make to manipulation of halfwords more
+	efficient.
+	* (or36_swapped, xor36_swapped, ancd36_swapped):  New macros to do
+	logical ops with the halves swapped.  Mostly used by TSxx
+	instructions.
+	* (add36):  Set PC_CRY0 when carry 0 would be set.
+	* (cxx):  Quote args better.
+	* (cxx_i):  New forms of cxx macros to compare against immediate
+	values.
+	* (testbits36 testbits36_swapped):  New macros to implement tests
+	for TDxx and TSxx instructions.
+
+	* i_arith.c (multiply):  Fix bug with multiplying by -2^36.  Cleans
+	up some issues with negative number handling.
+
+Sat Jun 17 18:07:29 1995  Stu Grossman  (grossman@cygnus.com)
+
+	* Makefile:  Add NetBSD BPF support.
+	* console.c (read_from_console):  Work around for OSF1 bug to
+	prevent hangs.  See how many characters are pending before doing a
+	read(), because reading on an empty fd causes a SIGIO.
+	* i_byte.c:  Fix handling of byte pointers where pos+size > 36.
+	Stop printing errors when OWGPs are used in section 0.
+	* i_rh20.c (process_receive_packet):  Print out source and dest
+	Ethernet addresses for length overflow errors.
+	* Don't include alloca.h for some reason...
+	* (cono, kni):  Don't reset the signal handler whenever port-enable
+	bit is on.
+	* ether_netbsd.c:  New file.  BPF driver for {Free|Net)BSD.
+
+Tue Oct  4 09:19:57 1994  Stu Grossman  (grossman@cygnus.com)
+
+	* Makefile:  Add version.c.
+	* kx10.c (main):  Call output_version().
+	* unpack.c:  New.  high density to core dump format converter.
+	* version.c:  New file, just prints version info.  Version is now
+	officially 0.9.
+	* COPYING:  New file, GNU Copyleft info.
+	* Makefile, console.c, eacalc.c, ether_bpf.c, ether_dummy.c,
+	ether_snit.c, gendisp, i_misc.c i_arith.c i_byte.c i_io.c i_rh20.c
+	i_shift.c i_simple.c i_skipjump.c i_stack.c, kx10.c, loadexe.c,
+	pager.c, interrupt.c, misc.c, version.c, gendisp, pdp10.h,
+	unpack.c:  Add copyright notices.
+
+Tue Oct  4 08:16:34 1994  Stu Grossman  (grossman@cygnus.com)
+
+	* i_rh20.c (disk_func):  Leave VV alone during drive clear.
+	(Waits fix.)
+	* loadexe.c (readdmp):  Just set jobrel to -1.  (Waits fix.)
+
+Sat Sep 10 08:43:39 1994  Stu Grossman  (grossman@phydeaux.cygnus.com)
+
+	* Makefile:  Add .c.o rule to remove useless warnings about shift
+	counts.  Add irix target.
+	* console.c, gendisp, i_misc.c, kx10.c, misc.c:  Put /* */ around
+	comments after #endifs.
+	* ether_dummy.c:  Remove unused ref to pkf.
+	* i_arith.c (dfad, dfsb, dfmp, dfdv):  Just call equivalent
+	single-precision routines for now.
+	* (imul, imuli, imulm, imulb):  Set Overflow and trap 1 flags as
+	appropriate.
+
+	* (imulb, addb, subb):  Reorder for correct VM restart behavior by
+	updating AC *after* vstore.
+	* i_misc.c (xblt, blt):  Switch to correct (but sub-optimal)
+	algorithm to fix VM restart problem with overlapping source/dest.
+	EMACS now works!!!
+	* (xpcw):  Reorder for proper VM restart behavior by setting flags
+	*after* fetching pc/flags.
+
+	* i_rh20.c (consz rh0,):  Skip if non-existant channel.
+	* i_simple.c (dadd, dsub, dmovn):  New.
+	* (setzb, andb, xorb, iorb, setob):  Reorder for correct VM
+	restart behavior by storing AC *after* vstore.
+	* i_skipjump.c (trza, tlza):  Reorder for correct VM restart
+	behavior by incrementing PC *after* updating AC.
+
+	* loadexe.c (readdmp):  Update 037 as jobrel.
+
+	* pdp10.h:  Remove def of PAGEMASK.  Several Unicies define this.
+	(It's not used anyway).
+	* (neg36):  Rewrite (based on sub36).
+	* (add72, sub72, neg72):  New, 72 (actually 70) bit arithmetic.
+
+Mon Sep  5 09:51:48 1994  Stu Grossman  (grossman@cygnus.com)
+
+	* gendisp, i_io.c, pdp10.h:  Change I/O dispatch to use a single
+	routine.  Check for appropriate privileges before doing I/O
+	instructions.
+	* loadexe.c (readexb):  Reset file pointer.
+
+Mon Sep  5 07:37:37 1994  Stu Grossman  (grossman@cygnus.com)
+
+	* .gdbinit:  break on genunimp and suspend.
+	* Makefile:  Use different targets for osf1, sunos, and
+	unspecified OSs.
+	* console.c:  Make lots of things static, cleanup formatting, gcc
+	-Wall.
+	* (input_interrupt, read_clock, dte_interrupt):  Waits (kldcp) support.
+	* gendisp (io dispatches): Check for appropriate privileges.
+	* i_arith.c:  gcc -Wall.
+	* i_byte.c: gcc -Wall.
+	* i_io.c:  gcc -Wall.
+	* (conso apr, datao apr, datai cca, blko, tim, conso tty, consz
+	tty, cono tms2, coni 404, cono/datao/consz 530):  Waits support.
+	* i_misc.c:  gcc -Wall.
+	* (INST(blt)):  Waits support.  (INST(jsa)):  New.
+	* i_rh20.c:  gcc -Wall.
+	* (rh20_init):  Disable kni for Waits.
+	* (cono_rh20):  Handle 0200 (reset command list).
+	* (disk_func):  Handle recal, pack ack, & readin preset.
+	* Implement channel skip.
+	* (datao_rh20):  Don't turn on primary cmd full.
+	* (conso rh0, consz rh0):  New, Waits support.
+	* (process_receive_packet, send_packet, init_kni):  Move BPF/OSF1
+	specific code into ether_bpf.c.
+	* ether_bpf.c:  New, Berkeley Packet Filter interface.
+	* ether_dummy.c:  New, dummy module for hosts which don't support
+	user ethernet interfaces.
+	* ether_snit.c:  New, prototype snit (Sunos) ethernet support.
+	* i_shift.c:  Handle rotate amounts >= 36 & 72.  gcc -Wall.
+	* i_simple.c:  New instructions, setzi, setcmi, setoi.  gcc -Wall.
+	* i_skipjump.c:  New instruction, cam.
+	* i_stack.c:  gcc -Wall.
+	* interrupt.c:  gcc -Wall.
+	* (handle_interrupt):  Copy interrupt into interrupt_tmp to avoid
+	having value change during calculations.  Invoke interrupt
+	instructions in section 0.
+	* kx10.c:  gcc -Wall.
+	* boot.exe support.
+	* New options:  -d - start OS in debug mode.  -b - setup AC0 for
+	boot.exe.  -n - Don't patch the monitor.  -w - Boot a Waits image.
+	* Enable trace instruction.
+	* loadexe.c:  gcc -Wall.
+	* (readexb):  Read .EXB files.
+	* (readdmp):  Read a Waits dmp file.
+	* misc.c:  gcc -Wall.
+	* (i_trace):  Trace instruction.  Dumps out PC history.
+	* pager.c:  gcc -Wall.
+	* (page_fault):  Support direct section pointers (Waits support).
+	* pdp10.h:  gcc -Wall.  Add lots of prototypes.  Add support for
+	gcc, stdc, and non-gcc compilers.  Parenthesize macro args (more
+	thoroughly).
+	* Define PC_UIO.  Add SIGUSR1 to BLOCKEDSIGS.
+
+Sat Aug 27 10:14:21 1994  Stu Grossman  (grossman@cygnus.com)
+
+	* Years of development.  Checkpoint.
+
+Mon Aug 22 15:19:47 1994  Stu Grossman  (grossman@cygnus.com)
+
+        * Next historical version.  Changes seem to have occurred between
+	2/26/91 and 3/31/91.  Major changes to opdisp generation.  We now
+	use a Perl script (gendisp) and INST macros to automatically
+	generate the dispatch table, which lives in dispatch.c.
+	* Instruction routines are now in seperate files, by category.
+	* `console' now supports ^T.
+	* Added support for multiple AC blocks (will be needed for PXCT,
+	among other things).
+	* Use new AC, ACplus1, ACplusxx macros instead of acref(ac).
+	* Add some low-level macros (eqv36, cge, cgt, cle, clt) to do
+	various 36 bit manipulations and comparisons.
+
+	* Makefile:  Support for automatic dispatch table generation.
+	* arith.c:  Debugging code for 36 bit multiply.
+	* console.c (dte_interrupt):  Add ^T for status.
+	* dpbtest.c:  Test case for dpb macro.
+	* execute.c (execute):  Turn off PC history code for speed.
+	* Define currentacblock.
+	* gendisp:  Perl program to generate opcode dispatch tables in
+	dispatch.c.
+	* i_byte.c:  New file.  Implements ibp, ildb, ldb, idpb, dpb.
+	* i_io.c:  New file.  Implements I/O instructions for APR, PI,
+	PAG, MTR, TIM, DTE.
+	* i_misc.c:  New file.  Implements extend, jffo, blt, jrst, jfcl,
+	xct,  jsr, jsp.  Also handles unimplemented instructions, and has
+	instruction dispatcher.
+	* i_shift.c:  New file.  Implements ash, rot, lsh, lshc.
+	* i_simple.c:  New file.  Implements movXXX, dmovXXX, exch,
+	boolean, and halfword instructions.
+	* i_skipjump.c:  New file.  Implements aobXX, caXXX, jumpXX,
+	skipXX, aojXXX, aosXXX, sojXXX and tXXX instructions.
+	* i_stack.c:  New file.  Implements adjsp, pushj, push, pop and
+	popj.
+	* instruction.c:  Deleted.  Split into several i_*.c file.
+	* loadup.c (pa):  Use AC macro.
+	* pager.c (Pstore):  Added debug code to look for stores to 0147.
+	Helped find a weird and ancient TOPS-20 bug!
+	* pdp10.h:  Too many to write down here....
+	* shift.c:  Compiler test case for broken C shift operators.
+	* test.c:  Test case for subtraction?
+
+Mon Aug 22 15:07:13 1994  Stu Grossman  (grossman@cygnus.com)
+
+	* Makefile, Makefile.o3, console.c, eacalc.c, execute.c,
+	instruction.c, interrupt.c, loadup.c, pager.c, pdp10.h:  Check in
+	earliest versions that can be easily located.  Earliest date is
+	May 14, 1990, but earlier versions certainly exist.

@@ -1,0 +1,208 @@
+#! /usr/bin/perl
+#
+# Halfword instruction generator for kx10, the PDP-10 emulator.
+# Copyright (C) 1995 Stu Grossman
+#
+# This file is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+# 
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# 
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.  */
+#
+
+#
+# This program generates C code for all of the (64) halfword instructions.
+# This is possible because of the regularity of this part of the instruction
+# set.
+#
+
+# Define the sign extension routine
+
+sub sign_extend {
+    local ($what) = @_;
+    local ($pos);
+    local ($bit);
+
+    if ($ext_hw eq "r") {
+	$pos = 35;
+    } else {
+	$pos = 17;
+    }
+
+    if ($sign_ext eq "z") {
+	print "\n  dpb ($pos, 18, 0, $what);\n";
+    } elsif ($sign_ext eq "o") {
+	print "\n  dpb ($pos, 18, HWORDMASK, $what);\n";
+    } elsif ($sign_ext eq "e") {
+	if ($dst_hw eq "l") {
+	    $bit = 0;
+	} else {
+	    $bit = 18;
+	}
+	print "\n  if (biton ($bit, $what))\n";
+	print "    {\n";
+	print "      dpb ($pos, 18, HWORDMASK, $what);\n";
+	print "    }\n";
+	print "  else\n";
+	print "    {\n";
+	print "      dpb ($pos, 18, 0, $what);\n";
+	print "    }\n";
+    }
+}
+
+# Output the file prologue
+
+print '#include "pdp10.h"';
+print "\n\n";
+
+# We generate the instructions in opcode order.
+
+for ($opcode = 0500; $opcode <= 0577; $opcode++) {
+
+# First, parse the opcode
+
+# Dest halfword
+    if ($opcode & 040) {
+	$dst_hw = "r";
+    } else {
+	$dst_hw = "l";
+    }
+
+# Source halfword
+    if ($opcode & 04) {		# It's swapped
+	if ($dst_hw eq "r") {
+	    $src_hw = "l";
+	} else {
+	    $src_hw = "r";
+	}
+    } else {			# Not swapped
+	$src_hw = $dst_hw;
+    }
+
+# Extension halfword (always the opposite of the dest halfword).
+    if ($dst_hw eq "r") {
+	$ext_hw = "l";
+    } else {
+	$ext_hw = "r";
+    }
+
+# Sign extension
+    if (($opcode & 030) == 0) {
+	$sign_ext = "";
+    } elsif (($opcode & 030) == 010) {
+	$sign_ext = "z";
+    } elsif (($opcode & 030) == 020) {
+	$sign_ext = "o";
+    } elsif (($opcode & 030) == 030) {
+	$sign_ext = "e";
+    }
+
+# Source and dest
+    if (($opcode & 03) == 0) {
+	$mem_op = "";
+    } elsif (($opcode & 03) == 01) {
+	$mem_op = "i";
+    } elsif (($opcode & 03) == 02) {
+	$mem_op = "m";
+    } elsif (($opcode & 03) == 03) {
+	$mem_op = "s";
+    }
+
+
+# Now, generate the actual C code for this instruction
+
+# First, the prologue
+    printf "INST(h${src_hw}${dst_hw}${sign_ext}${mem_op}, 0%o)\n", $opcode;
+    print "{\n";
+
+# Decide on the major cases based on $mem_op
+
+    if ($mem_op eq "") {	# memory => register
+	print "  word36 mem;\n\n";
+
+# Fetch the word
+	print "  vfetch (ea, mem);\n";
+
+# Load the appropriate halfword into AC
+ 	print "  hw_${src_hw}${dst_hw} (AC, mem);\n";
+
+# Do sign extension.
+	&sign_extend ("AC");
+
+    } elsif ($mem_op eq "i") {	# immediate
+	if ($src_hw eq "r") {
+	    $imm_val = "ea";
+	} else {
+# Loading left half of immediate value.  With the exception of hlli (also known
+# as xhlli), we just load 0.  For hlli, we load the section number.
+
+	    if ($dst_hw eq "l" && $sign_ext eq "") {
+		$imm_val = "(pcsection && is_acref(ea)) ? 1 : (ea & ADDRMASK) >> 18";
+	    } else {
+		$imm_val = "0";
+	    }
+	}
+
+	if ($dst_hw eq "l") {
+	    $pos = 17;
+	} else {
+	    $pos = 35;
+	}
+
+	print "  dpb ($pos, 18, $imm_val, AC);\n";
+
+# Do sign extension.
+	&sign_extend ("AC");
+
+    } elsif ($mem_op eq "m") {	# register => memory
+	print "  word36 mem;\n\n";
+
+# Fetch the word if necessary.  We only need to fetch the word from memory if
+# we are preserving the non-destination half.  When doing sign extension, zero,
+# or one fills, the other half is destroyed, so the fetch is unnecessary.
+
+	if ($sign_ext eq "") {
+	    print "  vfetch (ea, mem);\n";
+	}
+
+# Load the appropriate halfword into mem
+	print "  hw_${src_hw}${dst_hw} (mem, AC);\n";
+
+# Do sign extension.
+	&sign_extend ("mem");
+
+	print "\n  vstore (ea, mem);\n";
+
+    } elsif ($mem_op eq "s") { # memory => memory (also store in reg if reg #= 0)
+	print "  word36 mem;\n\n";
+
+# Always fetch the word.
+
+	print "  vfetch (ea, mem);\n";
+
+# Load the appropriate halfword into mem
+	print "  hw_${src_hw}${dst_hw} (mem, mem);\n";
+
+# Do sign extension.
+	&sign_extend ("mem");
+
+	print "\n  vstore (ea, mem);\n";
+
+	print "\n  if (ac)\n    AC = mem;\n";
+    } else {			# Shouldn't get here
+	printf stderr "Unknown mem_op '$mem_op'.  Aborting.\n";
+	exit 1;
+    }
+
+
+# And, finally the epilogue
+    print "}\n\n"
+}
