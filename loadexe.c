@@ -458,7 +458,6 @@ readdmp ()
 
   printf ("[Highest addr = 0%o]\r\n", addr - 1);
 
-
   pfetch (0116, mem);		/* Get .jbsym */
   pstore (036, mem);		/* Put it where eddt expects it */
 

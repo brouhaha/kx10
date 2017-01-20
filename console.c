@@ -69,10 +69,11 @@ console_reset ()
 void
 suspend ()
 {
+  print_io_times ();
 #ifdef SIGSTOP
   kill(getpid(), SIGTSTP);
 #else
-  exit();
+  exit (0);
 #endif
 }
 
@@ -235,7 +236,10 @@ input_interrupt()
 		       (pcflags << 5) | (pcsection >> 18), pc);
 
 		print_interrupts ();
-		printf ("\r\n");
+! 		printf ("\r\n");
+
+		print_pccounts ();
+		print_io_times ();
 
 		sigprocmask (SIG_SETMASK, &oldmask, NULL);
 	      }
@@ -281,7 +285,8 @@ console_init ()
   action.sa_handler = alarm_handler;
   sigaction (SIGVTALRM, &action, NULL);
 
-  console_fd = open ("/dev/tty", O_RDWR);
+  if (console_fd < 0)
+    console_fd = open ("/dev/tty", O_RDWR);
 
   if (console_fd < 0)
     {

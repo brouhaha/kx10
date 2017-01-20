@@ -73,7 +73,7 @@ join("\n	", @filearray) .
 
 print dfile "extern void ";
 
-print dfile "i_unimp(),i_luuo(),i_uuo(),i_io(),";
+print dfile "i_unimp(),i_io_unimp(),i_luuo(),i_uuo(),";
 
 $comma = "";
 foreach $inst (@defined) {
@@ -88,9 +88,22 @@ foreach $inst (%ioarray) {
 }
 print dfile ";\n\n";
 
+# Generate the uuo forward refs
+
+print dfile "static void ";
+
+$comma = "";
+for ($i = 0; $i <= 0100; $i++) {
+	$i_oct = sprintf("%o", $i);
+
+	print dfile "${comma}i_uuo${i_oct}()";
+	$comma = ",";
+}
+print dfile ",i_uuo104 ();\n\n";
+
 # Generate the forward ref table for the I/O dispatch routines
 
-print dfile "void ";
+print dfile "extern void ";
 
 $comma = "";
 for($i = 0700; $i < 01000; $i++) {
@@ -111,15 +124,15 @@ for($i = 0; $i < 01000; $i++) {
 		$imp_count++;
 	} else {
 	    if ($i >= 1 && $i <= 037) {
-		$inst = "i_luuo";
+		$inst = "i_uuo$i_oct";
 		$imp_count++;
 	    } elsif ($i == 0
 		     || ($i >= 040 && $i <= 0100)
 		     || $i == 0104) {
-		$inst = "i_uuo";
+		$inst = "i_uuo$i_oct";
 		$imp_count++;
 	    } elsif (($i >= 0700)) {
-		$inst = "i_io";
+		$inst = "i_io$i_oct";
 		$imp_count++;
 	    } else {
 		$inst = "i_unimp";
@@ -135,31 +148,86 @@ for($i = 0; $i < 01000; $i++) {
 
 print dfile "};\n\n";
 
-# Generate the second level I/O dispatch vectors
+# uuo and luuo stubs
 
-print dfile "void (*iodisp[])() = {\n";
-
-for($i = 0; $i <= 01777; $i++) {
+for($i = 0; $i <= 0100; $i++) {
 	$i_oct = sprintf("%o", $i);
 
-	if ($ioarray{$i} ne "") {
-		($op, $dev) = split(/ /, $ioarray{$i});
-		$inst = "i_${op}_${dev}";
+	if ($i >= 1 && $i <= 037) {
+		$l = l;
 	} else {
-		$dev = sprintf("%03o", ($i & ~7) >> 1);
-		$op = $io_ops[$i & 7];
-		$inst = "i_unimp";
+		$l = "";
 	}
-	$tabs = "\t\t";
-	$tabs = "\t\t\t" if (length($inst) < 8);
-	print dfile "${inst}${tabs}/* $op $dev, */,\n";
 
-	if (($i & 7) == 7) {
-		print dfile "\n";
-	}
+	print dfile "static
+INST (uuo${i_oct}, 0${i_oct})
+{
+  i_${l}uuo (0${i_oct}, ac, ea);
 }
 
-print dfile "};\n\n";
+";
+}
+
+print dfile "static
+INST (uuo104, 0104)
+{
+  i_uuo (0104, ac, ea);
+}
+
+";
+
+# Generate the second level I/O dispatch routines.  Basically, all
+# that these do is restore the opcode and call i_io().
+
+#for($i = 0700; $i <= 0777; $i++) {
+#	$i_oct = sprintf("%o", $i);
+#
+#	print dfile "static
+#INST (io$i_oct, 0${i_oct})
+#{
+#  i_io (0${i_oct}, ac, ea);
+#}
+#
+#";
+#}
+
+#print dfile "/* All I/O instructions come through here.  This does the second level dispatch
+#   through a switch table.  */
+#
+#static
+#SPECIAL_INST (io, 000)
+#{
+#  if (!(pcflags & (PC_USER | PC_PUBLIC)) || (pcflags & PC_UIO))
+#    (*iodisp[((opcode << 4) | ac) & 01777])(ac, ea);
+#  else
+#    i_uuo (opcode, ac, ea);
+#
+#";
+
+# Generate the I/O switch table
+
+#print dfile "  switch ((opcode << 2 | ac) & 01777)\n    {\n";
+
+#for($i = 0; $i <= 01777; $i++) {
+#	if ($ioarray{$i} ne "") {
+#		($op, $dev) = split(/ /, $ioarray{$i});
+#		$inst = "i_${op}_${dev}";
+#		if ($i == 0) {
+#			$lastdev = $dev;
+#		}
+#		if ($dev ne $lastdev) {
+#			print dfile "\n";
+#			$lastdev = $dev;
+#		}
+#		$tmp = sprintf "    case 0%o<<2|%o: ${inst} (ac, ea); return;", ($i >> 1) & 0774, $i & 07;
+#		$tabs = "\t";
+#		$tabs = "\t\t" if (length($tmp) < 48);
+#		print dfile "${tmp}${tabs}/* $op $dev, */\n";
+#	}
+#}
+#print dfile "    default: i_io_unimp (opcode, ac, ea); return;\n  }\n";
+#
+#print dfile "}\n\n";
 
 print dfile "char *opnames[] = {";
 

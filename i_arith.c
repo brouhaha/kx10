@@ -109,6 +109,122 @@ multiply (mp, mc, phi, plo)
     return 1;			/* No overflow */
 }
 
+/* Calculate the 140 bit product of MP and MC.  Put the result in *HI and *LO
+   in the standard 70 bit format.  Return 1 if overflow, 0 otherwise. */
+
+static inline int unpack_72 PARAMS ((unsigned short *dest_array,
+				     word36 hi_word, word36 lo_word));
+static inline int
+unpack_72 (dest_array, hi_word, lo_word)
+     unsigned short *dest_array;
+     word36 hi_word, lo_word;
+{
+  int k;
+
+  dest_array[1] = ldb (6, 7, hi_word);
+  dest_array[2] = ldb (22, 16, hi_word);
+  dest_array[3] = ldb (35, 13, hi_word) << 3;
+  dest_array[3] |= ldb (3, 3, lo_word);
+  dest_array[4] = ldb (19, 16, lo_word);
+  dest_array[5] = ldb (35, 16, lo_word);
+
+  if (!(dest_array[1] & 0100))
+    return 0;			/* Positive, we're all done */
+
+  /* Negative.  Make positive. */
+
+  k = (unsigned short)~dest_array[5] + 1;
+  dest_array[5] = k;
+  k = (unsigned short)~dest_array[4] + (k >> 16);
+  dest_array[4] = k;
+  k = (unsigned short)~dest_array[3] + (k >> 16);
+  dest_array[3] = k;
+  k = (unsigned short)~dest_array[2] + (k >> 16);
+  dest_array[2] = k;
+  dest_array[1] = (dest_array[1] ^ 0177) + (k >> 16);
+
+  return 1;
+}
+
+static int multiply_72 PARAMS ((word36 mp_hi, word36 mp_lo, word36 mc_hi, word36 mc_lo,
+				word36 *p3, word36 *p2, word36 *p1, word36 *p0));
+static int
+multiply_72 (mp_hi, mp_lo, mc_hi, mc_lo, p3, p2, p1, p0)
+     register word36 mp_hi, mp_lo;
+     register word36 mc_hi, mc_lo;
+     register word36 *p3, *p2, *p1, *p0;
+{
+  unsigned short u[6], v[6], w[11];
+  register unsigned int t, k, sign;
+  register int i, j;
+
+  sign = unpack_72 (u, mp_hi, mp_lo);
+
+  sign ^= unpack_72 (v, mc_hi, mc_lo);
+
+  memset (w, '\000', sizeof w);
+
+  for (j = 5; j > 0; j--)
+    {
+      k = 0;
+      for (i = 5; i > 0; i--)
+	{
+	  t = u[i] * v[j] + w[i+j] + k;
+	  w[i+j] = t;
+	  k = t >> 16;
+	}
+      w[j] = k;
+    }
+
+  if (sign)               /* Negative? */
+    {
+      k = (unsigned short)~w[10] + 1;
+      w[10] = k;
+      k = (unsigned short)~w[9] + (k >> 16);
+      w[9] = k;
+      k = (unsigned short)~w[8] + (k >> 16);
+      w[8] = k;
+      k = (unsigned short)~w[7] + (k >> 16);
+      w[7] = k;
+      k = (unsigned short)~w[6] + (k >> 16);
+      w[6] = k;
+      k = (unsigned short)~w[5] + (k >> 16);
+      w[5] = k;
+      k = (unsigned short)~w[4] + (k >> 16);
+      w[4] = k;
+      k = (unsigned short)~w[3] + (k >> 16);
+      w[3] = k;
+      w[2] = ~w[2] + (k >> 16);
+    }
+
+  /* Sign must come from result in case product was 0 or overflowed. */
+  sign = w[2] >> 12;
+
+  dpb (12, 13, w[2], *p3);
+  dpb (28, 16, w[3], *p3);
+  dpb (35, 7, w[4] >> 9, *p3);
+
+  dpb (9, 10, (sign << 9) | (w[4] & 0x1ff), *p2);
+  dpb (25, 16, w[5], *p2);
+  dpb (35, 10, w[6] >> 6, *p2);
+
+  dpb (6, 7, (sign << 6) | (w[6] & 0x3f), *p1);
+  dpb (22, 16, w[7], *p1);
+  dpb (35, 13, w[8] >> 3, *p1);
+
+  dpb (3, 4, (sign << 3) | (w[8] & 0x7), *p0);
+  dpb (19, 16, w[9], *p0);
+  dpb (35, 16, w[10], *p0);
+
+/* The only overflow case (-2^70 * -2^70) results in an excessivly large
+   positive number (2^140), which shows up as w[2] == 010000.  */
+
+  if (w[2] == 010000)		/* Positive and too large? */
+    return 0;			/* We overflowed */
+  else
+    return 1;			/* No overflow */
+}
+
 /*
   Divide the 70 bit number in uwhi, uwlo by vw storing the quotient in *qw and
   remainder in *rw.  Handles positive and negative numbers.
@@ -321,6 +437,265 @@ divide (uwhi, uwlo, vw, qw, rw)
 
   if (remainder_sign)
     neg36 (*rw, *rw);
+
+  return 1;
+}
+
+/*
+  Divide the 140 bit number in uwhi, uwlo by vw storing the quotient in *qw and
+  remainder in *rw.  Handles positive and negative numbers.
+
+  Returns 0 if divide by 0 or quotient overflow, 1 otherwise.
+*/
+
+static int divide_72 PARAMS ((word36 u0, word36 u1, word36 u2, word36 u3,
+			      word36 v_hi, word36 v_lo,
+			      word36 *q_hi, word36 *q_lo,
+			      word36 *r_hi, word36 *r_lo));
+static int
+divide_72 (u0, u1, u2, u3, v_hi, v_lo, q_hi, q_lo, r_hi, r_lo)
+     word36 u0, u1, u2, u3;
+     word36 v_hi, v_lo;
+     word36 *q_hi, *q_lo, *r_hi, *r_lo;
+{
+  unsigned long u[10], v[6], rem;
+  unsigned long q[10], r[6];
+  unsigned long tmp, t2;
+  int d, j, k, leadingzeros;
+  const unsigned int base = 0x10000;
+  const unsigned int bshift = 16;
+  const unsigned int bmask = base - 1;
+  int n, m, quotient_sign, remainder_sign;
+
+  if (lt36 (u0))		/* Negative? */
+    {
+      quotient_sign = remainder_sign = 1;
+
+      neg144 (u0, u1, u2, u3, u0, u1, u2, u3);
+    }
+  else
+    quotient_sign = remainder_sign = 0;
+
+  u[9] = ldb (35, 16, u3);
+  u[8] = ldb (19, 16, u3);
+  u[7] = ldb (3, 3, u3) | (ldb (35, 13, u2) << 3);
+  u[6] = ldb (22, 16, u2);
+  u[5] = ldb (6, 6, u2) | (ldb (35, 10, u1) << 6);
+  u[4] = ldb (25, 16, u1);
+  u[3] = ldb (9, 9, u1) | (ldb (35, 7, u0) << 9);
+  u[2] = ldb (28, 16, u0);
+  u[1] = ldb (12, 13, u0);
+  u[0] = 0;
+
+  if (lt36 (v_hi))		/* Negative? */
+    {
+      quotient_sign ^= 1;
+
+      neg72 (v_hi, v_lo, v_hi, v_lo);
+    }
+
+/* If the magnitude of the upper part of the dividend is >= the magnitude of
+   the divisor, we would get a quotient overflow.  */
+
+  dpb (0, 1, 0, v_lo);
+  dpb (0, 1, 0, u1);
+
+  if (!(cltu (u0, v_hi)
+	|| (ceq (u0, v_hi) && cltu (u1, v_lo))))
+    return 0;
+
+  v[5] = ldb (35, 16, v_lo);
+  v[4] = ldb (19, 16, v_lo);
+  v[3] = (ldb (35, 13, v_hi) << 3) | ldb (3, 3, v_lo);
+  v[2] = ldb (22, 16, v_hi);
+  v[1] = ldb (6, 6, v_hi);
+  v[0] = 0;
+
+  /* Find first non-zero digit of v */
+
+  n = sizeof v / sizeof v[0] - 1; /* Highest index in v */
+
+  /* Find the highest non-zero element in v */
+
+  for (j = 1; j <= n; j++)
+    if (v[j] != 0)
+      break;
+
+  if (j > n)
+    return 0;			/* Divide by 0! */
+
+  leadingzeros = j - 1;
+
+  /* Shift v left to get rid of leading zeros */
+
+  for (j = 1; j <= n - leadingzeros; j++)
+    v[j] = v[leadingzeros + j];
+
+  n -= leadingzeros;
+
+  m = (sizeof u / sizeof u[0] - 1) - n;
+
+  d = base / (v[1] + 1);
+
+  /* Normalize u */
+
+  tmp = 0;
+  for (j = n + m; j >= 0; j--)
+    {
+      t2 = u[j] * d + tmp;
+      tmp = t2 >> bshift;
+      u[j] = t2 & bmask;
+    }
+
+  /* Normalize v */
+
+  tmp = 0;
+  for (j = n; j >= 1; j--)
+    {
+      t2 = v[j] * d + tmp;
+      tmp = t2 >> bshift;
+      v[j] = t2 & bmask;
+    }
+
+  for (j = 0; j <= m ;j++)
+    {
+      unsigned long qhat, rhat;
+
+      /* Calculate qhat */
+
+      if (u[j] == v[1])
+	{
+	  qhat = base - 1;
+	  rhat = u[j + 1] + v[1];
+	}
+      else
+	{
+	  qhat = ((u[j] << bshift) + u[j + 1]) / v[1];
+	  rhat = ((u[j] << bshift) + u[j + 1]) % v[1];
+	}
+
+      /* If qhat was too big, decrement it */
+
+      while (rhat < base
+	     && v[2] * qhat > (rhat << bshift) + u[j + 2])
+	{
+	  qhat--;
+	  rhat += v[1];
+	}
+
+      /* Multiply and subtract */
+
+      t2 = 0;
+      for (k = n; k >= 0; k--)
+	{
+	  unsigned long t3;
+
+	  t3 = qhat * v[k] + t2;
+	  t2 = t3 >> bshift;
+	  t3 &= bmask;
+	  u[j + k] -= t3;
+	  
+	  if (u[j + k] >= base)
+	    {			/* Need to borrow */
+	      if (k == 0)
+		break;		/* Subtract overflowed */
+	      u[j + k - 1]--;
+	      u[j + k] &= bmask;
+	    }
+	}
+
+      q[j + n] = qhat;
+
+      if (u[j] >= base)
+	{
+	  /* qhat was too large...  Decr and correct u */
+	  q[j + n]--;
+	  for (k = n; k >= 1; k--)
+	    {
+	      u[j + k] += v[k];
+	      if (u[j + k] >= base)
+		{		/* Carry */
+		  u[j + k - 1]++;
+		  u[j + k] &= bmask;
+		}
+	    }
+	}
+    }
+
+  /* Calculate the remainder */
+
+  rem = 0;
+  for (j = 0; j < n; j++)
+    {
+      unsigned long x;
+
+      x = (rem << bshift) + u[j + m + 1];
+      r[j] = x / d;
+      rem = x % d;
+    }
+
+  dpb (35, 16, q[9], *q_lo);
+  dpb (19, 16, q[8], *q_lo);
+  dpb (3, 4, q[7] & 07, *q_lo);
+  dpb (35, 13, q[7] >> 3, *q_hi);
+  dpb (22, 16, q[6], *q_hi);
+  dpb (6, 7, q[5] & 0177, *q_hi);
+
+  if (quotient_sign)
+    {
+      neg72 (*q_hi, *q_lo, *q_hi, *q_lo);
+      dpb (0, 1, ldb (0, 1, *q_hi), *q_lo); /* Copy sign bit to lower word */
+    }
+
+  *r_hi = zero36;
+  *r_lo = zero36;
+  switch (n)
+    {
+    case 1:
+      dpb (35, 16, r[0], *r_lo);
+      break;
+    case 2:
+      dpb (19, 16, r[0], *r_lo);
+      dpb (35, 16, r[1], *r_lo);
+      break;
+    case 3:
+      dpb (35, 13, r[0] >> 3, *r_hi);
+      dpb (3, 4, r[0] & 7, *r_lo);
+      dpb (19, 16, r[1], *r_lo);
+      dpb (35, 16, r[2], *r_lo);
+      break;
+    case 4:
+      dpb (22, 16, r[0], *r_hi);
+      dpb (35, 13, r[1] >> 3, *r_hi);
+      dpb (3, 4, r[1] & 7, *r_lo);
+      dpb (19, 16, r[2], *r_lo);
+      dpb (35, 16, r[3], *r_lo);
+      break;
+    case 5:
+      dpb (6, 6, r[0], *r_hi);
+      dpb (22, 16, r[1], *r_hi);
+      dpb (35, 13, r[2] >> 3, *r_hi);
+      dpb (3, 4, r[2] & 7, *r_lo);
+      dpb (19, 16, r[3], *r_lo);
+      dpb (35, 16, r[4], *r_lo);
+      break;
+    case 6:
+      dpb (6, 6, r[1], *r_hi);
+      dpb (22, 16, r[2], *r_hi);
+      dpb (35, 13, r[3] >> 3, *r_hi);
+      dpb (3, 4, r[3] & 7, *r_lo);
+      dpb (19, 16, r[4], *r_lo);
+      dpb (35, 16, r[5], *r_lo);
+      break;
+    default:
+      abort ();
+    }
+
+  if (remainder_sign)
+    {
+      neg72 (*r_hi, *r_lo, *r_hi, *r_lo);
+      dpb (0, 1, ldb (0, 1, *r_hi), *r_lo); /* Copy sign bit to lower word */
+    }
 
   return 1;
 }
@@ -686,7 +1061,18 @@ float_divide (opcode, ac, ea)
   dpb (35, 27, fractmp, tmp);
 
   if (sign)
-    neg36 (tmp, tmp)
+    {
+      if (eq36(r))
+        {
+          neg36 (tmp, tmp);
+        }
+      else
+        {
+          upper18(tmp) = (~upper18(tmp)) & HWORDMASK;
+          lower18(tmp) = (~lower18(tmp)) & HWORDMASK;
+        }
+    }
+
 
   switch (opcode & 03)
     {
@@ -707,7 +1093,6 @@ float_divide (opcode, ac, ea)
     setflags (PC_TRAP1 | PC_OV | PC_FOV | PC_FUF);
 }
 
-#if 0
 static inline void dp_float_addsub PARAMS ((const int opcode, const int ac,
 					    addr10 ea));
 
@@ -718,11 +1103,14 @@ dp_float_addsub (opcode, ac, ea)
      addr10 ea;
 {
   int expa, expb, sign;
-  unsigned int fracta_high, fractb_high;
-  unsigned int fracta_low, fractb_low;
-  word36 tmp_high, tmp_low;
+  unsigned long fracta_high, fractb_high;
+  unsigned long fracta_mid, fractb_mid;
+  unsigned long fracta_low, fractb_low;
+  unsigned long tmp;
+  word36 tmp_high, tmp_low, tmp2_high, tmp2_low;
+  addr10 ea2;
 
-/* Extract the exponents and fractions */
+  /* Extract the exponents and fractions */
 
   if (lt36 (AC))
     neg72 (tmp_high, tmp_low, AC, ACplus1)
@@ -732,167 +1120,497 @@ dp_float_addsub (opcode, ac, ea)
       tmp_low = ACplus1;
     }
 
-  expa = ldb (8, 8, tmp);
-  fracta_high = (ldb (35, 27, tmp_high) << 4) | ldb (4, 4, tmp_low);
-  fracta_low = ldb (35, 31, tmp_low);
+  expa = ldb (8, 8, tmp_high);
+  fracta_high = (ldb (35, 27, tmp_high) << 3) | ldb (3, 3, tmp_low);
+  fracta_mid = ldb (34, 31, tmp_low);
+  fracta_low = ldb (35, 1, tmp_low) << 30;
   if (lt36 (AC))
     {
-      fracta_high = ~fracta_high;
-      fracta_low = -fracta_low;
-      fracta_high += fracta_low >> 31;
-      fracta_low &= 0x7fffffff;	/* Clear overflow bit */
+      if ((expa != 0) && ((fracta_high | fracta_mid | fracta_low) == 0))
+	fracta_high=0x20000000; 
+      fracta_low = ((~fracta_low) & 0x7fffffff) + 1;
+      fracta_mid = ((~fracta_mid) & 0x7fffffff) + (fracta_low >> 31);
+      fracta_low &= 0x7fffffff; /* Clear overflow bit */
+      fracta_high = (~fracta_high + (fracta_mid >> 31));
+      fracta_mid &= 0x7fffffff;	/* Clear overflow bit */
     }
 
-/* Get the second operand. */
+  /* Get the second operand. */
 
   vfetch (ea, tmp_high);
-  ea = increa (ea);
-  vfetch (ea, tmp_low);
+  vfetch (increa (ea), tmp_low);
 
   if (lt36 (tmp_high))
-    neg72 (tmp_high, tmp_low, tmp_high, tmp_low);
-
-  expb = ldb (8, 8, tmp_high);
-  fractb_high = (ldb (35, 27, tmp_high) << 4) | ldb (4, 4, tmp_low);
-  fractb_low = ldb (35, 31, tmp_low);
-  if (lt36 (AC))
     {
-      fractb_high = ~fractb_high;
-      fractb_low = -fractb_low;
-      fractb_high += fractb_low >> 31;
-      fractb_low &= 0x7fffffff; /* Clear overflow bit */
+      neg72 (tmp2_high, tmp2_low, tmp_high, tmp_low);
+    }
+  else
+    {
+      tmp2_high = tmp_high;
+      tmp2_low = tmp_low;
     }
 
-/* Unnormalize the smaller operand so that exponents are the same */
+  expb = ldb (8, 8, tmp2_high);
+  fractb_high = (ldb (35, 27, tmp2_high) << 3) | ldb (3, 3, tmp2_low);
+  fractb_mid = ldb (34, 31, tmp2_low);
+  fractb_low = ldb (35, 1, tmp2_low) << 30;
+  /* If subtraction, negate 2nd operand */
+  if (((opcode != 0111) && lt36 (tmp_high)) || ((opcode == 0111) && !lt36 (tmp_high)))
+    {
+      fractb_low = ((~fractb_low) & 0x7fffffff) + 1;
+      fractb_mid = ((~fractb_mid) & 0x7fffffff) + (fractb_low >> 31);
+      fractb_low &= 0x7fffffff; /* Clear overflow bit */
+      fractb_high = (~fractb_high + (fractb_mid >> 31));
+      fractb_mid &= 0x7fffffff; /* Clear overflow bit */
+    }
+
+  /* Unnormalize the smaller operand so that exponents are the same */
 
   if (expa > expb)
     if (expa - expb > 62)
       {
 	fractb_high = 0;
+	fractb_mid = 0;
 	fractb_low = 0;
       }
     else
+      if (expa - expb > 31)
+	{
+	  fractb_low=((fractb_mid >> (expa - expb - 31)) | (fractb_high << (expa - expb - 62))) & 0x7ffffff;
+	  fractb_mid=((fractb_high >> (expa - expb - 31)) | 
+		      ((1 << (expa - expb - 32)) - 1) << (32 + 31 - (expa - expb))) &
+			0x7fffffff;
+
+	  if (fractb_high & 0x40000000)
+	    fractb_high=0xffffffff;
+	  else
+	    fractb_high=0;
+	}
+      else
       {
 	fractb_low >>= expa - expb;
-	fractb_low |= fractb_high << (31 - (expa - expb));
-	fractb_high >>= expa - expb;
+	fractb_low |= fractb_mid << (31 - (expa - expb));
+	fractb_low &= 0x7fffffff;
+	fractb_mid >>= expa - expb;
+	fractb_mid |= (fractb_high << (31 - (expa - expb)));
+	fractb_mid &= 0x7fffffff;
+	if (fractb_high & 0x40000000)
+	  fractb_high = (fractb_high >> (expa - expb)) |
+	      ((1 << (expa - expb)) - 1) << (32 - (expa - expb)); /* sign ext */
+	else
+	  fractb_high >>= expa - expb;
       }
   else if (expb > expa)
     {
       if (expb - expa > 62)
 	{
 	  fracta_high = 0;
+	  fracta_mid = 0;
 	  fracta_low = 0;
 	}
       else
+      if (expb - expa > 31)
 	{
-	  fracta_low >>= expa - expb;
-	  fracta_low |= fracta_high << (31 - (expa - expb));
-	  fracta_high >>= expa - expb;
+	  fracta_low=((fracta_mid >> (expb - expa - 31)) | (fracta_high << (expb - expa - 62))) & 0x7ffffff;
+	  fracta_mid=((fracta_high >> (expb - expa - 31)) | 
+		      ((1 << (expb - expa - 32)) - 1) << (32 + 31 - (expb - expa))) &
+			0x7fffffff;
+
+	  if (fracta_high & 0x40000000)
+	    fracta_high=0xffffffff;
+	  else
+	    fracta_high=0;
+	}
+      else
+	{
+	  fracta_low >>= expb - expa;
+	  fracta_low |= fracta_mid << (31 - (expb - expa));
+	  fracta_low &= 0x7fffffff;
+	  fracta_mid >>= expb - expa;
+	  fracta_mid |= (fracta_high << (31 - (expb - expa)));
+	  fracta_mid &= 0x7fffffff;
+	  if (fracta_high & 0x40000000)
+	    fracta_high = (fracta_high >> (expb - expa)) |
+	      ((1 << (expb - expa)) - 1) << (32 - (expb - expa)); /* sign ext */
+	  else
+	    fracta_high >>= expb - expa;
 	}
       expa = expb;
     }
 
-/* Actually perform the operation!  */
+  /* Actually perform the operation!  */
 
-  if (opcode == 0111)
-    fracta -= fractb;		/* Finally, do the subtraction */
-  else
-    fracta += fractb;		/* Or addition.  */
+  fracta_low += fractb_low;
+  fracta_mid += (fracta_low >> 31) + fractb_mid;
+  fracta_low &= 0x7fffffff;
+  fracta_high += (fracta_mid >> 31) + fractb_high;
+  fracta_mid &= 0x7fffffff;
 
-  if (fracta < 0)
+  if (fracta_high&0x80000000)
     {
       sign = 1;
-      fracta = -fracta;
+      fracta_low = ((~fracta_low) & 0x7fffffff) + 1;
+      fracta_mid = ((~fracta_mid) & 0x7fffffff) + (fracta_low >> 31);
+      fracta_low &= 0x7fffffff;
+      fracta_high = ~fracta_high + (fracta_mid >> 31);
+      fracta_mid &= 0x7fffffff;
     }
   else
     sign = 0;
 
-/* normalize */
+  /* normalize */
 
-  if (fracta & 0x40000000)
+  if (fracta_high & 0x40000000)
     {				/* Fraction too large */
       expa++;
-      fracta >>= 1;
+      fracta_low >>=1;
+      fracta_low |= (fracta_mid & 0x1) << 30;
+      fracta_mid >>=1;
+      fracta_mid |= (fracta_high & 0x1) << 30;
+      fracta_high >>= 1;
     }
-  else if (fracta > 0)
-    while (!(fracta & 0x20000000))
+  else if ((fracta_high | fracta_mid | fracta_low) > 0)
+    while (!(fracta_high & 0x20000000))
       {				/* Fraction too small */
 	expa--;
-	fracta <<= 1;
+	fracta_high <<= 1;
+	fracta_high |= fracta_mid >> 30;
+	fracta_mid = ((fracta_mid << 1) & 0x7fffffff) | (fracta_low >> 30);
+	fracta_low <<=1;
+	fracta_low &= 0x7fffffff;
       }
   else
     {				/* Fraction was zero */
       expa = 0;
-      fracta = 0;
+      fracta_high = 0;
+      fracta_mid = 0;
+      fracta_low = 0;
     }
 
-/* Round if necessary */
+  /* Always round in DP */
+  fracta_low += 0x20000000;
+  fracta_mid += (fracta_low >> 31);
+  fracta_low &= 0x7fffffff;
+  fracta_high += (fracta_mid >> 31);
+  fracta_mid &= 0x7fffffff;
 
-  if (opcode & 004)		/* Rounding requested */
-    {
-      fracta += 04;		/* Round up */
-      if (fracta & 0x40000000)	/* Rounding can unnormalize things */
-	{			/* Fraction too large */
-	  expa++;
-	  fracta >>= 1;
-	}
+  /* Maybe renormalize */
+  if (fracta_high & 0x40000000)
+    {				/* Fraction too large */
+      expa++;
+      fracta_low >>=1;
+      fracta_low |= (fracta_mid & 0x1) << 30;
+      fracta_mid >>=1;
+      fracta_mid |= (fracta_high & 0x1) << 30;
+      fracta_high >>= 1;
     }
-  fracta >>= 3;			/* Get rid of the extra precision */
 
-/* Repack the result */
+  /* Repack the result */
 
-  dpb (8, 9, expa & 0377, tmp);
-  dpb (35, 27, fracta, tmp);
+  dpb (8, 9, expa & 0377, tmp_high);
+  dpb (35, 27, (fracta_high & 0x3ffffff8) >> 3, tmp_high);
+  dpb (3, 3, (fracta_high & 0x7), tmp_low);
+  dpb (34, 31, fracta_mid, tmp_low);
+  dpb (35, 1, (fracta_low >> 30) & 1, tmp_low);
   if (sign)
-    neg36 (tmp, tmp);
+    neg72 (tmp_high, tmp_low, tmp_high, tmp_low);
+  dpb (0,1,0,tmp_low);
 
-  switch (opcode & 03)
-    {
-    case 03:			/* Both? */
-      vstore (ea, tmp);		/* Store to memory and fall thru */
-    case 00:			/* Regular */
-    case 01:			/* Immediate */
-      AC = tmp;			/* Yes, both store to AC */
-      break;
-    case 02:			/* Memory */
-      vstore (ea, tmp);
-      break;
-    }
+  AC = tmp_high;
+  ACplus1 = tmp_low;
 
   if (expa > 255)
     setflags (PC_OV | PC_FOV | PC_TRAP1);
   else if (expa < 0)
     setflags (PC_OV | PC_FOV | PC_FUF | PC_TRAP1);
 }
-#endif
+
+static inline void dp_float_multiply PARAMS ((const int opcode, const int ac,
+					    addr10 ea));
+
+static inline void
+dp_float_multiply (opcode, ac, ea)
+     const int opcode;
+     const int ac;
+     addr10 ea;
+{
+  int expa, expb, expr, sign;
+  word36 terma_high, terma_low, termb_high, termb_low;
+  word36 tmp_high, tmp_low, tmp2_high, tmp2_low;
+  word36 r_0,r_1,r_2,r_3;
+
+  unsigned long rw1, rw2, rw3;
+
+  addr10 ea2;
+
+  /* Extract the exponents and fractions */
+
+  sign=0;
+  if (lt36 (AC))
+    {
+      neg72 (tmp_high, tmp_low, AC, ACplus1);
+      sign=1;
+    }
+  else
+    {
+      tmp_high = AC;
+      tmp_low = ACplus1;
+    }
+
+  expa = ldb (8, 8, tmp_high);
+  upper18(terma_high) = ldb (24, 16, tmp_high);
+  lower18(terma_high) = (ldb (35, 11, tmp_high) << (18 - 11)) | (ldb (7, 7, tmp_low));
+  upper18(terma_low)  = ldb (24, 17, tmp_low);
+  lower18(terma_low)  = ldb (35, 11, tmp_low) << (18 - 11);
+  
+  /* Get the second operand. */
+
+  vfetch (ea, tmp_high);
+  vfetch (increa(ea), tmp_low);
+
+  if (lt36 (tmp_high))
+    {
+      neg72 (tmp2_high, tmp2_low, tmp_high, tmp_low);
+      sign ^= 1;
+    }
+  else
+    {
+      tmp2_high=tmp_high;tmp2_low=tmp_low;
+    }
+
+  expb = ldb (8, 8, tmp2_high);
+  upper18(termb_high) = ldb (24, 16, tmp2_high);
+  lower18(termb_high) = (ldb (35, 11, tmp2_high) << (18 - 11)) | (ldb (7, 7, tmp2_low));
+  upper18(termb_low)  = ldb (24, 17, tmp2_low);
+  lower18(termb_low)  = ldb (35, 11, tmp2_low) << (18 - 11);
+
+  /* Counting on pre-normalized terms.. */
+
+  multiply_72 (terma_high, terma_low, termb_high, termb_low, &r_0, &r_1, &r_2, &r_3);
+
+  /* Calculate the new exponent. */
+  expr = expa + expb - 128 - 1;
+
+  /* Extract our result fraction, rounding it at the same time. */
+  rw1 = ldb (34, 32, r_0);
+  rw2 = ((ldb (35, 1, r_0) << (31 - 1)) | ldb (30, 30, r_1)); /* Skip extra sign */
+  rw3 = ((ldb (35, 5, r_1) << (31 - 5)) | ldb (26, 26, r_2));
+
+  if (rw1 & 0x80000000)
+    {
+      expr++;
+      rw3 |= (rw2 << 31);
+      rw3 >>= 1;
+      rw2 |= (rw1 << 31);
+      rw2 >>= 1;
+      rw1 >>= 1;
+    }
+  if ((rw1 | rw2 | rw3) > 0)
+    while (!(rw1 & 0x40000000))
+      {
+	expr--;
+	rw1 <<= 1;
+	rw2 <<= 1;
+	rw3 <<= 1;
+	rw1 |= (rw2 >> 31);
+	rw2 |= (rw3 >> 31);
+	rw2 &= 0x7fffffff;
+	rw3 &= 0x7fffffff;
+	}
+    else
+      {
+	expr = 0;
+	rw1 = 0;
+	rw2 = 0;
+      }
+  
+  rw3 += 0x40000000;
+  rw2 += rw3 >> 31;
+  rw3 &= 0x7fffffff;
+  rw1 += rw2 >> 31;
+  rw2 &= 0x7fffffff;
+
+  /* May have to re-normalize the result, because of the rounding */
+  if (rw1 & 0x80000000)
+    {
+      expr++;
+      rw3 |= (rw2 << 31);
+      rw3 >>= 1;
+      rw2 |= (rw1 << 31);
+      rw2 >>= 1;
+      rw1 >>= 1;
+    }
+
+  tmp_high=tmp_low=zero36;
+  dpb (8, 9, expr & 0377, tmp_high);
+  dpb (35, 27, (rw1 & 0x7ffffff0) >> 4, tmp_high);
+  dpb (4, 4, (rw1 & 0xf), tmp_low);
+  dpb (35, 31, rw2, tmp_low);
+  if (sign)
+    neg72 (tmp_high, tmp_low, tmp_high, tmp_low);  
+
+  AC = tmp_high;
+  ACplus1 = tmp_low;
+
+  if (expr > 255)
+    setflags (PC_TRAP1 | PC_OV | PC_FOV);
+  else if (expr < 0)
+    setflags (PC_TRAP1 | PC_OV | PC_FOV | PC_FUF);
+}
+
+static inline void dp_float_divide PARAMS ((const int opcode, const int ac,
+					    addr10 ea));
+
+static inline void
+dp_float_divide (opcode, ac, ea)
+     const int opcode;
+     const int ac;
+     addr10 ea;
+{
+  int expa, expb, expr, sign, retval;
+  word36 terma_1, terma_2, terma_3, terma_4, termb_high, termb_low;
+  word36 tmp_high, tmp_low, tmp2_high, tmp2_low;
+  word36 q_0,q_1,r_0,r_1;
+  
+  unsigned long rw1, rw2, rw3;
+  
+  addr10 ea2;
+  
+  /* Extract the exponents and fractions */
+  
+  sign=0;
+  if (lt36 (AC))
+    {
+      neg72 (tmp_high, tmp_low, AC, ACplus1);
+      sign=1;
+    }
+  else
+    {
+      tmp_high = AC;
+      tmp_low = ACplus1;
+    }
+  
+  expa = ldb (8, 8, tmp_high);
+  upper18(terma_1) = ldb (24, 16, tmp_high);
+  lower18(terma_1) = (ldb (35, 11, tmp_high) << (18 - 11)) | (ldb (7, 7, tmp_low));
+  upper18(terma_2)  = ldb (24, 17, tmp_low);
+  lower18(terma_2)  = ldb (35, 11, tmp_low) << (18 - 11);
+  terma_3 = zero36;
+  terma_4 = zero36;
+  
+  /* Get the second operand. */
+  
+  vfetch (ea, tmp_high);
+  vfetch (increa(ea), tmp_low);
+  
+  if (lt36 (tmp_high))
+    {
+      neg72 (tmp2_high, tmp2_low, tmp_high, tmp_low);
+      sign ^= 1;
+    }
+  else
+    {
+      tmp2_high=tmp_high;tmp2_low=tmp_low;
+    }
+  
+  expb = ldb (8, 8, tmp2_high);
+  upper18(termb_high) = ldb (25, 17, tmp2_high);
+  lower18(termb_high) = (ldb (35, 10, tmp2_high) << (18 - 10)) | (ldb (8, 8, tmp2_low));
+  upper18(termb_low)  = ldb (25, 17, tmp2_low);
+  lower18(termb_low)  = ldb (35, 10, tmp2_low) << (18 - 10);
+  
+  /* Counting on pre-normalized terms.. */
+  
+  retval = 
+    divide_72 (terma_1, terma_2, terma_3, terma_4, termb_high, termb_low, &q_0, &q_1, &r_0, &r_1);
+  
+  if (retval == 0)
+    {
+      setflags (PC_TRAP1 | PC_OV | PC_FOV | PC_NODIV);
+      return;
+    }
+  
+  /* Calculate the new exponent. */
+  expr = expa - expb + 128 + 1;
+  
+  /* Extract our result fraction*/
+  rw1 = ldb (31, 31, q_0);
+  rw2 = ((ldb (35, 4, q_0) << (31 - 4)) | ldb (27, 27, q_1)); /* Skip extra sign */
+  rw3 = ldb (35, 8, q_1) << (31 - 8) ;
+
+  /* Normalize */
+  if ((rw1 | rw2 | rw3) > 0)
+    while (!(rw1 & 0x40000000))
+      {
+	expr--;
+	rw1 <<= 1;
+	rw2 <<= 1;
+	rw3 <<= 1;
+	rw1 |= (rw2 >> 31);
+	rw2 |= (rw3 >> 31);
+	rw2 &= 0x7fffffff;
+	rw3 &= 0x7fffffff;
+      }
+  else
+    {
+      expr = 0;
+      rw1 = 0;
+      rw2 = 0;
+      rw3 = 0;
+    }
+
+  rw3 += 0x40000000;
+  rw2 += rw3 >> 31;
+  rw3 &= 0x7fffffff;
+  rw1 += rw2 >> 31;
+  rw2 &= 0x7fffffff;
+
+  /* May have to re-normalize the result, because of the rounding */
+  if (rw1 & 0x80000000)
+    {
+      expr++;
+      rw3 |= (rw2 << 31);
+      rw3 >>= 1;
+      rw2 |= (rw1 << 31);
+      rw2 >>= 1;
+      rw1 >>= 1;
+    }
+
+  tmp_high=tmp_low=zero36;
+  dpb (8, 9, expr & 0377, tmp_high);
+  dpb (35, 27, (rw1 & 0x7ffffff0) >> 4, tmp_high);
+  dpb (4, 4, (rw1 & 0xf), tmp_low);
+  dpb (35, 31, rw2, tmp_low);
+  if (sign)
+    neg72 (tmp_high, tmp_low, tmp_high, tmp_low);  
+
+  AC = tmp_high;
+  ACplus1 = tmp_low;
+
+  if (expr > 255)
+    setflags (PC_TRAP1 | PC_OV | PC_FOV);
+  else if (expr < 0)
+    setflags (PC_TRAP1 | PC_OV | PC_FOV | PC_FUF);
+}
 
 INST(dfad, 0110)
 {
-  void i_fadr PARAMS ((int opcode, int ac, addr10 ea));
-
-  i_fadr (opcode, ac, ea);	/* XXX */
+  dp_float_addsub (0110, ac, ea);
 }
 
 INST(dfsb, 0111)
 {
-  void i_fsbr PARAMS ((int opcode, int ac, addr10 ea));
-
-  i_fsbr (opcode, ac, ea);	/* XXX */
+  dp_float_addsub (0111, ac, ea);
 }
 
 INST(dfmp, 0112)
 {
-  void i_fmpr PARAMS ((int opcode, int ac, addr10 ea));
-
-  i_fmpr (opcode, ac, ea);	/* XXX */
+  dp_float_multiply (112, ac, ea);
 }
 
 INST(dfdv, 0113)
 {
-  void i_fdvr PARAMS ((int opcode, int ac, addr10 ea));
-
-  i_fdvr (opcode, ac, ea);	/* XXX */
+  dp_float_divide (113, ac, ea);
 }
 
 static inline void fix PARAMS ((int opcode, int ac, addr10 ea));
@@ -1031,13 +1749,29 @@ INST(fsc, 0132)
     }
 
   fracta = ldb (35, 27, AC);	/* Get fraction */
+  expa = ldb (8, 8, AC);	/* Get exponent */
+
   if (fracta == 0)
     {
+#if 0
+      /* this is what the spec says */
       zero (AC);
       return;
+#else
+      /* This seems to be what the original did */
+      if (sign)			/* if the number is negative */
+	{
+	  fracta = FRACTBIT;	/* then set the fraction to 1 */
+	  if (expa == 0)	/* special case 400000,,0 */
+	    dpb (0, 1, 0, AC);	/* clear sign bit */
+	}
+      else
+	{
+	  zero (AC);
+	  return;
+	}
+#endif
     }
-
-  expa = ldb (8, 8, AC);	/* Get exponent */
 
   scale = ea & 0377;
   if (ea & 0400000)
@@ -1209,22 +1943,22 @@ INST(fdvrb, 0177)
 
 INST(gfad, 0102)
 {
-  i_unimp (opcode, ac, ea);
+  i_unimp (0102, ac, ea);
 }
 
 INST(gfsb, 0103)
 {
-  i_unimp (opcode, ac, ea);
+  i_unimp (0103, ac, ea);
 }
 
 INST(gfmp, 0106)
 {
-  i_unimp (opcode, ac, ea);
+  i_unimp (0106, ac, ea);
 }
 
 INST(gfdv, 0107)
 {
-  i_unimp (opcode, ac, ea);
+  i_unimp (0107, ac, ea);
 }
 
 /* KA double precision floating point.  Usually implemented in software by the
@@ -1232,44 +1966,134 @@ INST(gfdv, 0107)
 
 INST(ufa, 0130)
 {
-  i_uuo (opcode, ac, ea);
+  i_uuo (0130, ac, ea);
 }
 
 INST(dfn, 0131)
 {
-  i_uuo (opcode, ac, ea);
+  i_uuo (0131, ac, ea);
 }
 
 INST(fadl, 0141)
 {
-  i_uuo (opcode, ac, ea);
+  i_uuo (0141, ac, ea);
 }
 
 INST(fsbl, 0151)
 {
-  i_uuo (opcode, ac, ea);
+  i_uuo (0151, ac, ea);
 }
 
 INST(fmpl, 0161)
 {
-  i_uuo (opcode, ac, ea);
+  i_uuo (0161, ac, ea);
 }
 
 INST(fdvl, 0171)
 {
-  i_uuo (opcode, ac, ea);
+  i_uuo (0171, ac, ea);
 }
 
 /* Double precision integer instructions.  */
 
+INST(dadd, 0114)
+{
+  word36 mem0, mem1;
+
+  vfetch (ea, mem0);
+  ea = increa (ea);
+  vfetch (ea, mem1);
+
+  add72_flags (AC, ACplus1, mem0, mem1);
+
+  if (pcflags & PC_TRAP1)
+    setflags (0);
+}
+
+INST(dsub, 0115)
+{
+  word36 mem0, mem1;
+
+  vfetch (ea, mem0);
+  ea = increa (ea);
+  vfetch (ea, mem1);
+
+  not36 (mem0, mem0);
+  not36 (mem1, mem1);
+
+  incr72_flags (mem0, mem1);
+
+  add72_flags (AC, ACplus1, mem0, mem1);
+
+  if (pcflags & PC_TRAP1)
+    setflags (0);
+}
+
 INST(dmul, 0116)
 {
-  i_unimp (opcode, ac, ea);
+  word36 mem0, mem1;
+
+  vfetch (ea, mem0);
+  ea = increa (ea);
+  vfetch (ea, mem1);
+
+  if (!multiply_72 (AC, ACplus1, mem0, mem1, &AC, &ACplus1, &ACplus2, &ACplus3))
+    setflags (PC_OV | PC_TRAP1);
 }
 
 INST(ddiv, 0117)
 {
-  i_unimp (opcode, ac, ea);
+  word36 mem0, mem1;
+
+  vfetch (ea, mem0);
+  ea = increa (ea);
+  vfetch (ea, mem1);
+
+  if (!divide_72 (AC, ACplus1, ACplus2, ACplus3, mem0, mem1,
+		  &AC, &ACplus1, &ACplus2, &ACplus3))
+    if (pcflags & PC_USER)
+      setflags (PC_TRAP1 | PC_OV | PC_NODIV);
+    else
+      setflags (PC_TRAP1 | PC_NODIV);
+}
+
+INST(dmovn, 0121)
+{
+  word36 mem0, mem1;
+
+  vfetch (ea, mem0);
+  ea = increa (ea);
+  vfetch (ea, mem1);
+
+  not36 (mem0, mem0);
+  not36 (mem1, mem1);
+
+  incr72_flags (mem0, mem1);
+  dpb (0, 1, 0, mem1);		/* Sign bit in 2nd word is always clear */
+
+  AC = mem0;
+  ACplus1 = mem1;
+
+  if (pcflags & PC_TRAP1)
+    setflags (0);
+}
+
+INST(dmovnm, 0125)
+{
+  word36 mem0, mem1;
+
+  not36 (mem0, AC);
+  not36 (mem1, ACplus1);
+
+  incr72_flags (mem0, mem1);
+  dpb (0, 1, 0, mem1);		/* Sign bit in 2nd word is always clear */
+
+  vstore (ea, mem0);
+  ea = increa (ea);
+  vstore (ea, mem1);
+
+  if (pcflags & PC_TRAP1)
+    setflags (0);
 }
 
 /* Single precision integer operations.  */

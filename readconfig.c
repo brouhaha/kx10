@@ -145,7 +145,7 @@ ConfigGetEthernetAddress (configinfo, pptr, name)
      const char *name;
 {
   char *p;
-  extern struct ether_addr *ether_aton PARAMS ((char *s));
+/*  extern struct ether_addr *ether_aton PARAMS ((char *s));*/
 
   p = lookupval (configinfo, pptr, name);
 

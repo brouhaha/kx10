@@ -1,3 +1,75 @@
+Thu Dec 12 10:02:23 1996  Stu Grossman  (grossman@critters.cygnus.com)
+
+	* Makefile.in:  List optional flags PCHIST KLDCP, DISK_PROFILE,
+	and PC_PROFILE.
+	* console.c (suspend):  Add call to print_io_times().  Supply arg
+	to exit (needed if SIGSTOP isn't defined).
+	* (input_interrupt):  Add calls to print_pccounts() and
+	print_io_times() when processing ^\^T.
+	* (console_init):  Don't re-open /dev/tty when continuing program
+	(it's already open).
+	* gendisp i_io.c:  Don't generate I/O dispatch tables.  Generate
+	them dynamically.
+	* i_io.c:  Create generic I/O routines for the 8 I/O insns.
+	Create new struct dcb to describe a device.  Contains pointers to
+	func vector for each I/O op, and pointers datai and coni locs.
+	dcb's hang off of the dcbvec, which is indexed by the 7 bit dev
+	code.  Many individual datai, coni, consz and conso routines can
+	now go away.
+	* (io700 ... io777):  First level I/O dispatch.  Re-installs
+	opcode for call to i_io().
+	* i_arith.c (unpack_72 multiply_72 divide_72 dmul ddiv):
+	Implement double precision integer multiply and divide insns.
+	* (dadd dsub dmovn dmovnm):  Move these from i_simple.c.
+	* i_misc.c:  Move decl of opdisp to pdp10.h.
+	* i_rh20.c (struct disk_params rp07_params_packed):  Add Support
+	for Bjorn Victor's packed disk file code.
+	* (init_channel):  Zero out struct channel when it's allocated.
+	Bug fix from Eric Smith.
+	* (disk_func):  Lengthen mask for sector to 8 bits.  Some disks
+	(such as rp07's) have more than 32 sectors/track.
+	* Convert rh and kni I/O functions to new scheme.
+
+
+Wed Jun 19 20:50:42 1996  Stu Grossman  (grossman@critters.cygnus.com)
+
+	* Makefile.in:  Set LDFLAGS from configure.in.
+	* configure.in, configure:  Make compiler options be compiler/OS/cpu
+	dependent.
+	* Split out OS only dependent options.
+	* gendisp i_arith.c i_io.c i_misc.c interrupt.c kx10.c pager.c
+	pdp10.h:  Stop passing opcode into to INST, IO_INST and related
+	routines.  This means all UUOs and unimplemented instructions must
+	have distinct routines, and that first level I/O dispatch routines
+	must all be unique as well.
+	* i_rh20.c:  Add table for rp07.
+	* Also, instrument disk read and write code.
+	* (process_receive_packet):  Restructure code slightly to allow
+	returning of packet too long errors.
+	* i_stack.c (pushj):  Clean up code a bit to avoid using zero36.
+	* kx10.c pager.c:  Add a one entry TLB cache for the page that the
+	PC is in.  Saves a bunch of calls to vfetch_i.  The hard part is
+	making sure that we clear the entry in the right places.
+	* misc.c (pl):  Change pl to pl36 to avoid conflict with a library
+	routine on some system.
+	* pager.c:  Restructure TLB from a set of three arrays to a single
+	array of structs.  This makes clearing a range of TLBs much more
+	efficient because of locality of reference.
+	* (vfetch_i_ref vref_rw):  New routines to return pointers to
+	physical memory.  Used by routines that may be making several
+	references to the same physical page, and want to avoid some calls
+	into the VM code.
+	* pdp10.h:  
+
+Tue Feb 13 11:22:21 1996  Stu Grossman  (grossman@critters.cygnus.com)
+
+	* i_rh20.c (disk_func):  Mask tracksectreg down to eight bits, not
+	five.  Some disks have more than 32 sectors/track!
+
+Wed Jun 19 19:17:31 1996  Stu Grossman  (grossman@critters.cygnus.com)
+
+	* version.c:  Bump version to 0.95.
+
 Mon Feb  5 09:07:09 1996  Stu Grossman  (grossman@andros.cygnus.com)
 
 	* console.c (input_interrupt):  Changes to status output (^T).

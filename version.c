@@ -20,7 +20,7 @@
 void
 output_version ()
 {
-  printf ("kx10 version 0.94, Copyright (C) 1994, 1995, 1996 Stu Grossman\n\
+  printf ("kx10 version 0.95, Copyright (C) 1994, 1995, 1996 Stu Grossman\n\
 kx10 comes with ABSOLUTELY NO WARRANTY; for details look at COPYING.\n\
 This is free software, and you are welcome to redistribute it\n\
 under certain conditions; look at COPYING for details.\n");

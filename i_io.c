@@ -44,10 +44,371 @@ int aprconi;			/* APR coni/cono bits */
 struct timeval boottime;	/* Start time of kx10 */
 int timconi;
 
+static struct dcb *dcbvec[128];
+
+static
+IO_INST (cono,generic, 000)
+{
+  if (dcb->hi_coni_ptr)
+    *dcb->hi_coni_ptr = ea;
+
+  if (dcb->lo_coni_ptr)
+    *dcb->lo_coni_ptr = ea;
+}
+
+static
+IO_INST (coni,generic,000)
+{
+  word36 mem;
+
+  if (dcb->hi_coni_ptr)
+    {
+      dpb (17, 18, *dcb->hi_coni_ptr, mem);
+    }
+  else
+    {
+      dpb (17, 18, 0, mem);
+    }
+
+  if (dcb->lo_coni_ptr)
+    {
+      dpb (35, 18, *dcb->lo_coni_ptr, mem);
+    }
+  else
+    {
+      dpb (35, 18, 0, mem);
+    }
+
+  vstore (ea, mem);
+}
+
+static
+IO_INST (conso,generic,000)
+{
+  int conival;
+
+  conival = dcb->lo_coni_ptr ? *dcb->lo_coni_ptr : 0;
+
+  if (conival & ea)
+    incrpc;
+}
+
+static
+IO_INST (consz,generic,000)
+{
+  int conival;
+
+  conival = dcb->lo_coni_ptr ? *dcb->lo_coni_ptr : 0;
+
+  if ((conival & ea) == 0)
+    incrpc;
+}
+
+static
+IO_INST (datao,generic,000)
+{
+  word36 mem;
+
+  vfetch (ea, mem);
+
+  if (dcb->hi_datai_ptr)
+    *dcb->hi_datai_ptr = upper18 (mem);
+
+  if (dcb->lo_datai_ptr)
+    *dcb->lo_datai_ptr = lower18 (mem);
+}
+
+static
+IO_INST (datai,generic,000)
+{
+  word36 mem;
+
+  if (dcb->hi_datai_ptr)
+    {
+      dpb (17, 18, *dcb->hi_datai_ptr, mem);
+    }
+  else
+    {
+      dpb (17, 18, 0, mem);
+    }
+
+  if (dcb->lo_datai_ptr)
+    {
+      dpb (35, 18, *dcb->lo_datai_ptr, mem);
+    }
+  else
+    {
+      dpb (35, 18, 0, mem);
+    }
+
+  vstore (ea, mem);
+}
+
+static
+IO_INST (blko,generic,000)
+{
+  word36 mem;
+  addr10 addr;
+  int count;
+
+  vfetch (ea, mem);		/* Get pointer */
+
+  count = upper18 (mem) + 1;
+  addr = pcsection | ((lower18 (mem) + 1) & HWORDMASK);
+
+  (*dcb->funcs)[3] (dcb, dev, opcode, addr);
+
+  if (count != 01000000)	/* Count overflow? */
+    incrpc;			/* No, skip instruction */
+
+  dpb (17, 18, count, mem);
+  dpb (35, 18, addr, mem);
+
+  vstore (ea, mem);
+}
+
+static
+IO_INST (blki,generic,000)
+{
+  word36 mem;
+  addr10 addr;
+  int count;
+
+  vfetch (ea, mem);		/* Get pointer */
+
+  count = upper18 (mem) + 1;
+  addr = pcsection | ((lower18 (mem) + 1) & HWORDMASK);
+
+  (*dcb->funcs)[1] (dcb, dev, opcode, addr);
+
+  if (count != 01000000)	/* Count overflow? */
+    incrpc;			/* No, skip instruction */
+
+  dpb (17, 18, count, mem);
+  dpb (35, 18, addr, mem);
+
+  vstore (ea, mem);
+}
+
+/* Unimplimented I/O insns come here.  We convert the device number and opcode
+   back into a form that i_unimp can deal with.  */
+
+IO_INST (unimp,unknown,000)
+{
+  i_unimp (0700 | (dev >> 1), ((dev << 3) | opcode) & 017, ea);
+}
+
+void
+define_device (devno, hi_coni_ptr, lo_coni_ptr, hi_datai_ptr, lo_datai_ptr,
+	       cono_rtn, datao_rtn)
+     int devno, *hi_coni_ptr, *lo_coni_ptr, *hi_datai_ptr, *lo_datai_ptr;
+     void (*cono_rtn) PARAMS ((struct dcb *dcb, addr10 ea));
+     void (*datao_rtn) PARAMS ((struct dcb *dcb, addr10 ea));
+{
+  struct dcb *dcb;
+}
+
+static io_func_type *badfuncs[8] =
+{
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_unimp_unknown,
+};
+
+/* This is for unknown devices.  Using them will generate errors.  */
+
+static
+struct dcb baddcb =
+{
+  NULL, NULL, NULL, NULL,
+  &badfuncs
+};
+
+static io_func_type *unimpfuncs[8] =
+{
+  i_blki_generic,
+  i_datai_generic,
+  i_blko_generic,
+  i_datao_generic,
+  i_cono_generic,
+  i_coni_generic,
+  i_consz_generic,
+  i_conso_generic,
+};
+
+/* This is for unimplemented devices.  Noops for the most part.  */
+
+static
+struct dcb unimpdcb =
+{
+  NULL, NULL, NULL, NULL,
+  &unimpfuncs
+};
+
+static io_func_type i_cono_apr;
+static io_func_type i_datao_apr;
+static io_func_type i_blki_apr;
+
+static io_func_type *aprfuncs[8] =
+{
+  i_blki_apr,
+  i_datai_generic,
+  i_unimp_unknown,
+  i_datao_apr,
+  i_cono_apr,
+  i_coni_generic,
+  i_consz_generic,
+  i_conso_generic,
+};
+
+static
+struct dcb aprdcb =
+{
+  &aprpiena, &aprconi, NULL, NULL,
+  &aprfuncs
+};
+
+static io_func_type i_cono_pi;
+static io_func_type i_blko_pi;
+
+static io_func_type *pifuncs[8] =
+{
+  i_datai_generic,		/* blki pi, = rdera (returns zero) */
+  i_unimp_unknown,		/* datai pi, */
+  i_blko_pi,			/* sbdiag */
+  i_unimp_unknown,		/* datao pi, */
+  i_cono_pi,
+  i_coni_generic,
+  i_consz_generic,
+  i_conso_generic,
+};
+
+static
+struct dcb pidcb =
+{
+  &ppireq, &piconi, NULL, NULL,
+  &pifuncs
+};
+
+static io_func_type i_cono_pag;
+static io_func_type i_datao_pag;
+static io_func_type i_blko_pag;
+
+static io_func_type *pagfuncs[8] =
+{
+  i_unimp_unknown,		/* blki pag, */
+  i_datai_generic,
+  i_blko_pag,			/* clrpt */
+  i_datao_pag,
+  i_cono_pag,
+  i_coni_generic,
+  i_consz_generic,
+  i_conso_generic,
+};
+
+static
+struct dcb pagdcb =
+{
+  NULL, &pagerconi, &pagerdataihigh, &pagerdatailow,
+  &pagfuncs
+};
+
+static io_func_type i_datai_cca;
+
+static io_func_type *ccafuncs[8] =
+{
+  i_unimp_unknown,
+  i_datai_cca,			/* Sweep cache */
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_unimp_unknown,
+};
+
+static
+struct dcb ccadcb =		/* Cache controller */
+{
+  NULL, NULL, NULL, NULL,
+  &ccafuncs
+};
+
+static io_func_type i_cono_tim;
+static io_func_type i_datai_tim;
+static io_func_type i_blko_tim;
+
+static io_func_type *timfuncs[8] =
+{
+  i_unimp_unknown,		/* blki tim, */
+  i_datai_tim,			/* rdtime */
+  i_blko_tim,			/* perf analysis */
+  i_unimp_unknown,		/* datao tim, */
+  i_cono_tim,
+  i_coni_generic,
+  i_consz_generic,
+  i_conso_generic,
+};
+
+static
+struct dcb timdcb =
+{
+  NULL, &timconi, NULL, NULL,
+  &timfuncs
+};
+
+static io_func_type i_cono_mtr;
+
+static io_func_type *mtrfuncs[8] =
+{
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_unimp_unknown,
+  i_cono_mtr,
+  i_coni_generic,
+  i_consz_generic,
+  i_conso_generic,
+};
+
+static
+struct dcb mtrdcb =
+{
+  NULL, &mtrconi, NULL, NULL,
+  &mtrfuncs
+};
+
+static io_func_type i_cono_dte;
+
+static io_func_type *dtefuncs[8] =
+{
+  i_blki_generic,
+  i_datai_generic,
+  i_blko_generic,
+  i_datao_generic,
+  i_cono_dte,
+  i_coni_generic,
+  i_consz_generic,
+  i_conso_generic,
+};
+
+static
+struct dcb dtedcb =
+{
+  NULL, &dteconi, NULL, NULL,
+  &dtefuncs
+};
+
 void
 io_init ()
 {
   extern int tops10_paging;
+  extern struct dcb rh0dcb, knidcb;
   const static int sigs[] = BLOCKEDSIGS;
   int i;
 
@@ -75,36 +436,50 @@ io_init ()
 
   rh20_init ();
 
-  no_device (0110);		/* Card punch */
-  no_device (0120);		/* KA console */
-  no_device (0204);		/* DTE1 */
-  no_device (0210);		/* DTE2 */
-  no_device (0214);		/* DTE3 */
-  no_device (0270);		/* RH10 # 0 */
-  no_device (0274);		/* RH10 # 1 */
-  no_device (0354);		/* TM10 */
-  no_device (0360);		/* RH10 # 2 */
-  no_device (0364);		/* RH10 # 3 */
-  no_device (0370);		/* RH10 # 4 */
-  no_device (0374);		/* RH10 # 5 */
-  no_device (0404);		/* strange WAITS device */
-  no_device (0520);		/* AN20#0 */
-  no_device (0524);		/* AN20#1 */
-  no_device (0530);		/* another strange WAITS device */
-  no_device (0544);		/* RH20 # 1 */
-  no_device (0550);		/* RH20 # 2 */
-  no_device (0554);		/* RH20 # 3 */
-  no_device (0560);		/* RH20 # 4 */
-				/* RH20 # 5 KNI */
-  no_device (0570);		/* RH20 # 6 */
-  no_device (0574);		/* RH20 # 7 */
+  for (i = 0; i <= 127; i++)
+    dcbvec[i] = &baddcb;
 
-  no_device (0774);		/* ?!?! */
+  dcbvec[000 >> 2] = &aprdcb;
+  dcbvec[004 >> 2] = &pidcb;
+  dcbvec[010 >> 2] = &pagdcb;
+  dcbvec[014 >> 2] = &ccadcb;
+  dcbvec[020 >> 2] = &timdcb;
+  dcbvec[024 >> 2] = &mtrdcb;
+  dcbvec[0200 >> 2] = &dtedcb;
+  dcbvec[0540 >> 2] = &rh0dcb;
+  dcbvec[0564 >> 2] = &knidcb;
+
+  dcbvec[0110 >> 2] = &unimpdcb; /* cdp - Card punch */
+  dcbvec[0120 >> 2] = &unimpdcb; /* tty - KA console */
+  dcbvec[0204 >> 2] = &unimpdcb; /* dte1 - DTE1 */
+  dcbvec[0210 >> 2] = &unimpdcb; /* dte2 - DTE2 */
+  dcbvec[0214 >> 2] = &unimpdcb; /* dte3 - DTE3 */
+  dcbvec[0270 >> 2] = &unimpdcb; /* rmc - RH10 # 0 */
+  dcbvec[0274 >> 2] = &unimpdcb; /* rmc2 - RH10 # 1 */
+  dcbvec[0354 >> 2] = &unimpdcb; /* tms2 - TM10 */
+  dcbvec[0360 >> 2] = &unimpdcb; /* rmc3 - RH10 # 2 */
+  dcbvec[0364 >> 2] = &unimpdcb; /* rmc4 - RH10 # 3 */
+  dcbvec[0370 >> 2] = &unimpdcb; /* rmc5 - RH10 # 4 */
+  dcbvec[0374 >> 2] = &unimpdcb; /* rmc6 - RH10 # 5 */
+  dcbvec[0404 >> 2] = &unimpdcb; /* waits - strange WAITS device */
+  dcbvec[0520 >> 2] = &unimpdcb; /* an0 - AN20#0 */
+  dcbvec[0524 >> 2] = &unimpdcb; /* an1 - AN20#1 */
+  dcbvec[0530 >> 2] = &unimpdcb; /* waits1 - another strange WAITS device */
+  dcbvec[0544 >> 2] = &unimpdcb; /* rh1 - RH20 # 1 */
+  dcbvec[0550 >> 2] = &unimpdcb; /* rh2 - RH20 # 2 */
+  dcbvec[0554 >> 2] = &unimpdcb; /* rh3 - RH20 # 3 */
+  dcbvec[0560 >> 2] = &unimpdcb; /* rh4 - RH20 # 4 */
+				/* RH20 # 5 KNI */
+  dcbvec[0570 >> 2] = &unimpdcb; /* rh6 - RH20 # 6 */
+  dcbvec[0574 >> 2] = &unimpdcb; /* rh7 - RH20 # 7 */
+
+  dcbvec[0774 >> 2] = &unimpdcb; /* unk - ?!?! */
 }
 
 /* Handle blki/blko to nonexistent device.  We go through the motions, but
    output data goes nowhere, and input data is always zero.  */
 
+#if 0
 SPECIAL_IO_INST (blkio,nodev,000)
 {
   word36 mem;
@@ -129,6 +504,9 @@ SPECIAL_IO_INST (blkio,nodev,000)
 
   vstore (ea, mem);
 }
+#endif
+
+static void (*iodisp[02000]) PARAMS ((addr10 ea));
 
 /* Define a non-existent device to prevent kx10 traps.  */
 
@@ -143,25 +521,14 @@ no_device (device)
 
   device <<= 1;			/* Make room for opcode */
 
-  iodisp[device + 0] = i_blkio_nodev;	/* BLKI */
+/*  iodisp[device + 0] = i_blkio_nodev;	/* BLKI */
   iodisp[device + 1] = i_setzm;		/* DATAI */
-  iodisp[device + 2] = i_blkio_nodev;	/* BLKO */
+/*  iodisp[device + 2] = i_blkio_nodev;	/* BLKO */
   iodisp[device + 3] = i_trn;		/* DATAO */
   iodisp[device + 4] = i_trn;		/* CONO */
   iodisp[device + 5] = i_setzm;		/* CONI */
   iodisp[device + 6] = i_trna;		/* CONSZ */
   iodisp[device + 7] = i_trn;		/* CONSO */
-}
-
-/* All I/O instructions come through here.  This does the second level dispatch
-   through the io dispatch table.  */
-
-SPECIAL_INST (io, 0700)
-{
-  if (!(pcflags & (PC_USER | PC_PUBLIC)) || (pcflags & PC_UIO))
-    (*iodisp[((opcode << 4) | ac) & 01777])(opcode, ac, ea);
-  else
-    i_uuo (opcode, ac, ea);
 }
 
 static void
@@ -227,6 +594,7 @@ IO_INST(blki,apr,000)		/* aprid */
   vstore (ea, tmp);
 }
 
+#if 0
 IO_INST(coni,apr,000)
 {
   word36 tmp;
@@ -253,14 +621,15 @@ IO_INST(datai,apr,000)
 {
   vstore (ea, zero36);		/* Address breaks not implemented */
 }
+#endif
 
 IO_INST(datao,apr,000)		/* Address break */
 {
   word36 mem;
 
-  vfetch(ea, mem);
+  vfetch (ea, mem);
 
-  if (ne36(mem))
+  if (ne36 (mem))
     printf ("datao apr non-zero!  %o,,%o\r\n", upper18(mem), lower18(mem));
 }
 
@@ -317,6 +686,7 @@ IO_INST(cono,pi,004)
   sigprocmask (SIG_SETMASK, &oldmask, NULL);
 }
 
+#if 0
 IO_INST(coni,pi,004)
 {
   word36 tmp;
@@ -337,20 +707,23 @@ IO_INST(conso,pi,004)
   if (piconi & ea) incrpc;
 }
 
+
 IO_INST(blki,pi,004)		/* rdera */
 {
   vstore(ea, zero36);
 }
+#endif
 
 IO_INST(blko,pi,004)		/* sbdiag */
 {
   word36 mem;
 
-  vfetch(ea, mem);
+  vfetch (ea, mem);
   ea = increa(ea);		/* XXX */
-  vstore(ea, zero36);
+  vstore (ea, zero36);
 }
 
+#if 0
 IO_INST(datai,pag,010)
 {
   word36 tmp;
@@ -359,6 +732,7 @@ IO_INST(datai,pag,010)
   dpb(35, 18, pagerdatailow, tmp);
   vstore(ea, tmp);
 }
+#endif
 
 IO_INST(datao,pag,010)
 {
@@ -414,6 +788,7 @@ IO_INST(cono,pag,010)
 				   keep bits). */
 }
 
+#if 0
 IO_INST(coni,pag,010)
 {
   word36 tmp;
@@ -432,6 +807,7 @@ IO_INST(conso,pag,010)
 {
   if (pagerconi & ea) incrpc;
 }
+#endif
 
 IO_INST(blko,pag,010)
 {
@@ -453,6 +829,7 @@ IO_INST(cono,tim,020)
     }
 }
 
+#if 0
 IO_INST(coni,tim,020)
 {
   word36 tmp;
@@ -463,6 +840,19 @@ IO_INST(coni,tim,020)
 
   vstore(ea, tmp);
 }
+
+IO_INST(consz,tim,020)
+{
+  if ((timconi & ea) == 0)
+    incrpc;
+}
+
+IO_INST(conso,tim,020)
+{
+  if (timconi & ea)
+    incrpc;
+}
+#endif
 
 IO_INST(datai,tim,020)
 {
@@ -520,6 +910,7 @@ IO_INST(blko,tim,020)		/* Perf analysis enables */
     printf ("Blko tim non-zero!  %o,,%o\r\n", upper18(mem), lower18(mem));
 }
 
+#if 0
 IO_INST(coni,mtr,024)
 {
   word36 tmp;
@@ -529,6 +920,7 @@ IO_INST(coni,mtr,024)
 
   vstore(ea, tmp);
 }
+#endif
 
 static void
 tick()
@@ -618,6 +1010,7 @@ IO_INST(cono,dte,200)
     }
 }
 
+#if 0
 IO_INST(consz,dte,200)
 {
   if ((dteconi & ea) == 0) incrpc;
@@ -626,4 +1019,345 @@ IO_INST(consz,dte,200)
 IO_INST(conso,dte,200)
 {
   if (dteconi & ea) incrpc;
+}
+#endif
+
+/* All I/O instructions come through here.  This does the second level dispatch
+   through a switch table.  */
+
+static inline
+SPECIAL_INST (io, 000)
+{
+  int dev;
+  int op;
+  struct dcb *dcb;
+
+  dev = (opcode << 1 | ac >> 3) & 0177;
+  dcb = dcbvec[dev];
+  op = ac & 07;
+
+  if (!(pcflags & (PC_USER | PC_PUBLIC)) || (pcflags & PC_UIO))
+    (*dcb->funcs)[op] (dcb, dev, op, ea);
+  else
+    i_uuo (opcode, ac, ea);
+}
+
+INST (io700, 0700)
+{
+  i_io (0700, ac, ea);
+}
+
+INST (io701, 0701)
+{
+  i_io (0701, ac, ea);
+}
+
+INST (io702, 0702)
+{
+  i_io (0702, ac, ea);
+}
+
+INST (io703, 0703)
+{
+  i_io (0703, ac, ea);
+}
+
+INST (io704, 0704)
+{
+  i_io (0704, ac, ea);
+}
+
+INST (io705, 0705)
+{
+  i_io (0705, ac, ea);
+}
+
+INST (io706, 0706)
+{
+  i_io (0706, ac, ea);
+}
+
+INST (io707, 0707)
+{
+  i_io (0707, ac, ea);
+}
+
+INST (io710, 0710)
+{
+  i_io (0710, ac, ea);
+}
+
+INST (io711, 0711)
+{
+  i_io (0711, ac, ea);
+}
+
+INST (io712, 0712)
+{
+  i_io (0712, ac, ea);
+}
+
+INST (io713, 0713)
+{
+  i_io (0713, ac, ea);
+}
+
+INST (io714, 0714)
+{
+  i_io (0714, ac, ea);
+}
+
+INST (io715, 0715)
+{
+  i_io (0715, ac, ea);
+}
+
+INST (io716, 0716)
+{
+  i_io (0716, ac, ea);
+}
+
+INST (io717, 0717)
+{
+  i_io (0717, ac, ea);
+}
+
+INST (io720, 0720)
+{
+  i_io (0720, ac, ea);
+}
+
+INST (io721, 0721)
+{
+  i_io (0721, ac, ea);
+}
+
+INST (io722, 0722)
+{
+  i_io (0722, ac, ea);
+}
+
+INST (io723, 0723)
+{
+  i_io (0723, ac, ea);
+}
+
+INST (io724, 0724)
+{
+  i_io (0724, ac, ea);
+}
+
+INST (io725, 0725)
+{
+  i_io (0725, ac, ea);
+}
+
+INST (io726, 0726)
+{
+  i_io (0726, ac, ea);
+}
+
+INST (io727, 0727)
+{
+  i_io (0727, ac, ea);
+}
+
+INST (io730, 0730)
+{
+  i_io (0730, ac, ea);
+}
+
+INST (io731, 0731)
+{
+  i_io (0731, ac, ea);
+}
+
+INST (io732, 0732)
+{
+  i_io (0732, ac, ea);
+}
+
+INST (io733, 0733)
+{
+  i_io (0733, ac, ea);
+}
+
+INST (io734, 0734)
+{
+  i_io (0734, ac, ea);
+}
+
+INST (io735, 0735)
+{
+  i_io (0735, ac, ea);
+}
+
+INST (io736, 0736)
+{
+  i_io (0736, ac, ea);
+}
+
+INST (io737, 0737)
+{
+  i_io (0737, ac, ea);
+}
+
+INST (io740, 0740)
+{
+  i_io (0740, ac, ea);
+}
+
+INST (io741, 0741)
+{
+  i_io (0741, ac, ea);
+}
+
+INST (io742, 0742)
+{
+  i_io (0742, ac, ea);
+}
+
+INST (io743, 0743)
+{
+  i_io (0743, ac, ea);
+}
+
+INST (io744, 0744)
+{
+  i_io (0744, ac, ea);
+}
+
+INST (io745, 0745)
+{
+  i_io (0745, ac, ea);
+}
+
+INST (io746, 0746)
+{
+  i_io (0746, ac, ea);
+}
+
+INST (io747, 0747)
+{
+  i_io (0747, ac, ea);
+}
+
+INST (io750, 0750)
+{
+  i_io (0750, ac, ea);
+}
+
+INST (io751, 0751)
+{
+  i_io (0751, ac, ea);
+}
+
+INST (io752, 0752)
+{
+  i_io (0752, ac, ea);
+}
+
+INST (io753, 0753)
+{
+  i_io (0753, ac, ea);
+}
+
+INST (io754, 0754)
+{
+  i_io (0754, ac, ea);
+}
+
+INST (io755, 0755)
+{
+  i_io (0755, ac, ea);
+}
+
+INST (io756, 0756)
+{
+  i_io (0756, ac, ea);
+}
+
+INST (io757, 0757)
+{
+  i_io (0757, ac, ea);
+}
+
+INST (io760, 0760)
+{
+  i_io (0760, ac, ea);
+}
+
+INST (io761, 0761)
+{
+  i_io (0761, ac, ea);
+}
+
+INST (io762, 0762)
+{
+  i_io (0762, ac, ea);
+}
+
+INST (io763, 0763)
+{
+  i_io (0763, ac, ea);
+}
+
+INST (io764, 0764)
+{
+  i_io (0764, ac, ea);
+}
+
+INST (io765, 0765)
+{
+  i_io (0765, ac, ea);
+}
+
+INST (io766, 0766)
+{
+  i_io (0766, ac, ea);
+}
+
+INST (io767, 0767)
+{
+  i_io (0767, ac, ea);
+}
+
+INST (io770, 0770)
+{
+  i_io (0770, ac, ea);
+}
+
+INST (io771, 0771)
+{
+  i_io (0771, ac, ea);
+}
+
+INST (io772, 0772)
+{
+  i_io (0772, ac, ea);
+}
+
+INST (io773, 0773)
+{
+  i_io (0773, ac, ea);
+}
+
+INST (io774, 0774)
+{
+  i_io (0774, ac, ea);
+}
+
+INST (io775, 0775)
+{
+  i_io (0775, ac, ea);
+}
+
+INST (io776, 0776)
+{
+  i_io (0776, ac, ea);
+}
+
+INST (io777, 0777)
+{
+  i_io (0777, ac, ea);
 }

@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 
 #ifdef HAVE_ALLOCA_H
 #include <alloca.h>
@@ -50,6 +51,7 @@ struct disk_params
 			     union punit punit,
 			     int regnum,
 			     int *reg)); /* Call this for register access */
+  int packed;			/* Whether disk is in core-dump or memory format */
 };
 
 struct disk_unit
@@ -144,7 +146,7 @@ init_channel (channel_num)
 {
   struct channel *channel;
 
-  channel = (struct channel *) malloc (sizeof (struct channel));
+  channel = (struct channel *) calloc (1, sizeof (struct channel));
 
   if (!channel)
     exit (1);
@@ -170,6 +172,8 @@ init_disk (channel, unit_num, filename, params, disk_serial)
     abort ();
 
   unit = (struct disk_unit *) malloc (sizeof (struct disk_unit));
+  unit->dsreg = 0;
+  unit->lastfilepos = 0;
 
   if (!unit)
     abort ();
@@ -179,29 +183,53 @@ init_disk (channel, unit_num, filename, params, disk_serial)
   if (unit->fd < 0)
     {
       int disksize;
+      off_t fileoffset;
 
-      if (errno != ENOENT)
-	abort();
+      switch (errno)
+	{
+	case ENOENT:		/* File doesn't exist.  Create it. */
+	  disksize = params->sec_per_cyl * params->ncyl * 128;
 
-      disksize = params->sec_per_cyl * params->ncyl * 128 * sizeof (word36);
+	  unit->fd = open (filename, O_RDWR|O_CREAT, 0666);
+	  if (unit->fd < 0)
+	    {
+	      perror ("Couldn't create disk file");
+	      exit (1);
+	    }
+	  /* We write the last byte in the file to prevent read errors from random
+	     access reads of a holey file.  */
+	  if (params->packed)
+	    fileoffset = HD_WORD_TO_BYTE (disksize);
+	  else
+	    fileoffset = disksize * sizeof (word36);
 
-      unit->fd = open (filename, O_RDWR|O_CREAT, 0666);
-      /* We write the last byte in the file to prevent read errors from random
-	 access reads of a holey file.  */
-      lseek (unit->fd, disksize - 1,
-	     SEEK_SET);
-      if (write (unit->fd, "", 1) != 1)	/* Write the last byte in the file */
-	abort ();
-      unit->lastfilepos = disksize;
+	  lseek (unit->fd, fileoffset - 1, SEEK_SET);
+
+	  if (write (unit->fd, "", 1) != 1) /* Write the last byte in the file */
+	    abort ();
+	  unit->lastfilepos = disksize;
+	  break;
+	case EACCES:		/* Write protected? */
+	  fprintf (stderr, "[kx10: file %s is write-protected.]\r\n", filename);
+	  unit->fd = open (filename, O_RDONLY);	/* Try readonly */
+	  unit->dsreg |= 04000;	/* Set write locked */
+	  break;
+	default:
+	  break;
+	}
     }
-  else
-    unit->lastfilepos = 0;
+
+  if (unit->fd < 0)
+    {
+      perror ("Couldn't open disk file");
+      exit (1);
+    }
 
   unit->params = *params;
   unit->regaccess = params->regaccess;
   unit->serial = disk_serial;
   unit->dcreg = 04200;		/* This port avail & ready */
-  unit->dsreg = 010700;		/* Media online, drive present,
+  unit->dsreg |= 010700;	/* Media online, drive present,
 				   drive ready, volume valid */
   unit->asreg = 1 << unit_num;	/* Set attention summary bit */
   channel->unit[unit_num].disk = unit;
@@ -264,6 +292,25 @@ static struct disk_params rp06_params = {
   20,				/* Sectors per track */
   800,				/* Number of cylinders */
   disk_regaccess,		/* Register access routine */
+  0,				/* Not packed */
+};
+
+static struct disk_params rp06_params_packed = {
+  022,				/* rp06 */
+  19 * 20,			/* Sectors per cylinder */
+  20,				/* Sectors per track */
+  800,				/* Number of cylinders */
+  disk_regaccess,		/* Register access routine */
+  0,				/* Not packed */
+};
+
+static struct disk_params rp07_params_packed = {
+  042,				/* RP07 (ty.r7f=042, fixed head) (or ty.r7m=041, moving head) */
+  32 * 43,			/* sec/cyl (tracks/cyl * sec/track) */
+  43,				/* sec/track */
+  629,				/* #cyl */
+  disk_regaccess,		/* reg access */
+  1,				/* packed */
 };
 
 static void tape_regaccess ();
@@ -277,14 +324,80 @@ int logfd;
 
 static void init_kni ();
 
+static struct disk_params * guess_disk_params PARAMS ((char *fname));
+
+static struct disk_params *
+guess_disk_params (fname)
+     char *fname;
+{
+  struct stat sb;
+
+  if (stat (fname, &sb) == 0)
+    {
+      unsigned long nwords;
+
+      nwords = rp07_params_packed.sec_per_cyl * rp07_params_packed.ncyl * 128;
+
+      if (sb.st_size == (nwords * 9) / 2)
+	{
+	  fprintf(stderr,"[kx10: %s is an RP07 in packed format]\r\n",fname);
+	  return &rp07_params_packed;
+	}
+
+      nwords = rp06_params.sec_per_cyl * rp06_params.ncyl * 128;
+
+      if ((sb.st_size == ((nwords * 9) / 2)) || (sb.st_size == 175102976)) /* Where does this number come from? */
+	{
+	  fprintf(stderr,"[kx10: %s is an RP06 in packed format]\r\n",fname);
+	  return &rp06_params_packed;
+	}
+
+      if (sb.st_size == (nwords * 8))
+	{
+	  fprintf(stderr,"[kx10: %s is an RP06 in word36 format]\r\n",fname);
+	  return &rp06_params;
+	}
+
+      fprintf(stderr,"[kx10: %s unknown disk type]\r\n",fname);
+      return NULL;
+    }
+  else
+    return NULL;
+}
+
 void
 rh20_init ()
 {
   extern int waits_flag;
+  int i;
+  int found_disk;
 
   init_channel (0);
+
+  found_disk = 0;
+  for (i = 0; i <= 7; i++)
+    {
+      struct disk_params *rp;
+      char fname[20];
+
+      sprintf (fname, "DISK-0-%o", i);
+
+      rp = guess_disk_params (fname);
+
+      if (!rp)
+	continue;
+
+      init_disk (channels[0], i, fname, rp, 1);
+      found_disk = 1;
+    }
+
+  if (!found_disk)
+    {
+      fprintf (stderr, "[kx10: No disk files found.  Creating rp06 volume DISK-0-0.]\r\n");
+      init_disk (channels[0], 0, "DISK-0-0", &rp06_params, 1);
+    }
+
   logfd = open ("disklog", O_RDWR|O_CREAT, 0666);
-  init_disk (channels[0], 0, "DISK-0-0", &rp06_params, 1);
   if (!init_tape (channels[0], 1, "TAPE-0-1", &tu45_params, 1))
     init_tape (channels[0], 1, "foo:/dev/nrmt0", &tu45_params, 1);
 
@@ -352,6 +465,64 @@ coni_rh20 (channel, ea)
   vstore(ea, tmp);
 }
 
+#ifdef DISK_PROFILE
+static long long readtimes = 0;
+static long readcount = 0;
+
+static inline int
+myread (int fd, void *buf, int size)
+{
+  struct timeval now, then;
+  int retval;
+  long t;
+
+  gettimeofday (&now, NULL);
+  retval = read (fd, buf, size);
+  gettimeofday (&then, NULL);
+
+  t = then.tv_usec - now.tv_usec;
+  if (t < 0)
+    t += 1000000;
+
+  readtimes += t;
+  readcount++;
+
+  return retval;
+}
+
+static long long writetimes = 0;
+static long writecount = 0;
+
+static inline int
+mywrite (int fd, void *buf, int size)
+{
+  struct timeval now, then;
+  int retval;
+  long t;
+
+  gettimeofday (&now, NULL);
+  retval = write (fd, buf, size);
+  gettimeofday (&then, NULL);
+
+  t = then.tv_usec - now.tv_usec;
+  if (t < 0)
+    t += 1000000;
+
+  writetimes += t;
+  writecount++;
+
+  return retval;
+}
+
+void
+print_io_times ()
+{
+  printf ("Read count = %d, read time %lld\r\n", readcount, readtimes);
+  printf ("Write count = %d, write time %lld\r\n", writecount, writetimes);
+}
+
+#endif /* DISK_PROFILE */
+
 /* Come here when drive control register is written.  This actually initiates
    I/O.  */
 
@@ -393,12 +564,12 @@ disk_func (channel, unit)
 	int sector;
 
 	track = (unit->tracksectreg >> 8) & 037;
-	sector = unit->tracksectreg & 037;
+	sector = unit->tracksectreg & 0377;
 
 	filepos = unit->cyl * unit->params.sec_per_cyl + track * unit->params.sec_per_track
 	  + sector;
 
-	filepos *= 128 * sizeof (word36);
+	filepos *= 128;
 
 	efetch (channel->logout + 0, &icw); /* Fetch initial icw from ept */
 
@@ -432,7 +603,7 @@ disk_func (channel, unit)
 		
 		tmp = ldb (13, 11, icw); /* Get count */
 		wordcnt -= tmp;	/* Skip words */
-		filepos += tmp * sizeof (word36);
+		filepos += tmp;
 		addr++;		/* Next channel word */
 	      }
 	    else
@@ -446,7 +617,14 @@ disk_func (channel, unit)
 
 	if (filepos != unit->lastfilepos)
 	  {
-	    if (lseek (unit->fd, filepos, SEEK_SET) == -1)
+	    off_t fileoffset;
+
+	    if (unit->params.packed)
+	      fileoffset = HD_WORD_TO_BYTE (filepos);
+	    else
+	      fileoffset = filepos * sizeof (word36);
+
+	    if (lseek (unit->fd, fileoffset, SEEK_SET) == -1)
 	      {
 		printf ("lseek error! errno = %d\r\n", errno);
 		genunimp ();
@@ -468,25 +646,83 @@ disk_func (channel, unit)
 
 	if ((unit->dcreg & 077) == 061)
 	  {
-	    if (write (unit->fd, &memarray[physaddr], wordcnt * sizeof (word36))
-		!= wordcnt * sizeof (word36))
+	    if (unit->params.packed)
 	      {
-		printf ("Disk write failure, errno = %d\r\n", errno);
-		genunimp ();
-		return;
+		unsigned char *p, *buf;
+		word36 *wp;
+
+		if ((filepos & 1) || (wordcnt & 1))
+		  {
+		    printf ("filepos (0x%x) or wordcnt (%d) not even.\r\n", filepos, wordcnt);
+		    genunimp ();
+		    return;
+		  }
+
+		buf = alloca (HD_WORD_TO_BYTE (wordcnt));
+
+		p = buf;
+		for (wp = memarray + physaddr;
+		     wp < memarray + physaddr + wordcnt;
+		     wp += 2, p += 9)
+		  word36_to_hd (wp[0], wp[1], p);
+
+		if (mywrite (unit->fd, buf, HD_WORD_TO_BYTE (wordcnt))
+		    != HD_WORD_TO_BYTE (wordcnt))
+		  {
+		    printf ("Disk write failure, errno = %d\r\n", errno);
+		    genunimp ();
+		    return;
+		  }
 	      }
+	    else
+	      if (mywrite (unit->fd, &memarray[physaddr], wordcnt * sizeof (word36))
+		  != wordcnt * sizeof (word36))
+		{
+		  printf ("Disk write failure, errno = %d\r\n", errno);
+		  genunimp ();
+		  return;
+		}
 	  }
 	else
 	  {
-	    if (read (unit->fd, &memarray[physaddr], wordcnt * sizeof (word36))
-		!= wordcnt * sizeof (word36))
+	    if (unit->params.packed)
 	      {
-		printf ("Disk read failure, errno = %d\r\n", errno);
-		genunimp ();
+		unsigned char *p, *buf;
+		word36 *wp;
+
+		if ((filepos & 1) || (wordcnt & 1))
+		  {
+		    printf ("filepos (0x%x) or wordcnt (%d) not even.\r\n", filepos, wordcnt);
+		    genunimp ();
+		    return;
+		  }
+
+		buf = alloca (HD_WORD_TO_BYTE (wordcnt));
+
+		if (myread (unit->fd, buf, HD_WORD_TO_BYTE (wordcnt))
+		    != HD_WORD_TO_BYTE (wordcnt))
+		  {
+		    printf ("Disk read failure, errno = %d\r\n", errno);
+		    genunimp ();
+		    return;
+		  }
+
+		p = buf;
+		for (wp = memarray + physaddr;
+		     wp < memarray + physaddr + wordcnt;
+		     wp += 2, p += 9)
+		  hd_to_word36 (p, wp[0], wp[1]);
 	      }
+	    else
+	      if (myread (unit->fd, &memarray[physaddr], wordcnt * sizeof (word36))
+		  != wordcnt * sizeof (word36))
+		{
+		  printf ("Disk read failure, errno = %d\r\n", errno);
+		  genunimp ();
+		}
 	  }
 
-	unit->lastfilepos += wordcnt * sizeof (word36);
+	unit->lastfilepos += wordcnt;
 
 	/* Now, setup channel logout words */
 
@@ -599,9 +835,9 @@ disk_regaccess (channel, punit, regnum, reg)
 
 /* Come here when drive control register is written.  This actually initiates
    I/O.  */
+#if 0
 #include <sys/mtio.h>
 
-#if 1
 static int rmt_buflen = 0;
 static char *rmt_bufp;
 static char rmt_buf[100];
@@ -759,15 +995,19 @@ tape_func (channel, unit)
      struct channel *channel;
      struct tape_unit *unit;
 {
+#if 0
   struct mtop mtop;
+#endif
 
   switch (unit->dcreg & 077)
     {
     case 03:			/* Rewind and unload */
     case 07:			/* Rewind */
       lseek (unit->fd, 0, SEEK_SET);
+#if 0
       mtop.mt_op = MTREW;
       ioctl (unit->fd, MTIOCTOP, &mtop); /* In case it's a real tape drive */
+#endif
 #if 1 /* hack alert */
       close (unit->fd);
       unit->fd = open ("TAPE-0-1", O_RDONLY);
@@ -783,10 +1023,14 @@ tape_func (channel, unit)
     case 011:			/* Drive clear */
       return;
     case 031:			/* Space fwd by records */
+#if 0
       mtop.mt_op = MTFSR;
       mtop.mt_count = unit->framecount;
+#endif
       lseek (unit->fd, -unit->framecount * 518 * 5, SEEK_CUR);
+#if 0
       ioctl (unit->fd, MTIOCTOP, &mtop);
+#endif
       /* We actually just pretend we hit a tape mark */
       unit->framecount = 0;
       unit->dsreg |= 0100000;	/* Set attention */
@@ -797,10 +1041,14 @@ tape_func (channel, unit)
 	set_interrupt (channel->coni, channel->intbit);
       return;
     case 033:			/* Space backwards by records */
+#if 0
       mtop.mt_op = MTBSR;
       mtop.mt_count = unit->framecount;
+#endif
       lseek (unit->fd, unit->framecount * 518 * 5, SEEK_CUR);
+#if 0
       ioctl (unit->fd, MTIOCTOP, &mtop);
+#endif
       unit->framecount = 0;	/* Pretend we skipped all records */
       unit->dsreg |= 0100000;	/* Set attention */
       channel->asreg |= unit->asreg; /* Set attention summary */
@@ -874,8 +1122,11 @@ tape_func (channel, unit)
 
 	    framebuf = (unsigned char *) alloca (framecount);
 
+#if 0
 	    framecount = tape_read (unit, framebuf, framecount);
-
+#else
+	    framecount = read (unit->fd, framebuf, framecount);
+#endif
 	    if (framecount < 0)
 	      {
 		printf ("Tape read failure, errno = %d\r\n", errno);
@@ -1213,6 +1464,33 @@ datai_rh20 (channel, ea)
   vstore(ea, mem);
 }
 
+extern io_func_type i_unimp_unknown;
+
+static io_func_type i_datai_rh0;
+static io_func_type i_datao_rh0;
+static io_func_type i_cono_rh0;
+static io_func_type i_coni_rh0;
+static io_func_type i_consz_rh0;
+static io_func_type i_conso_rh0;
+
+static io_func_type *rh0funcs[8] =
+{
+  i_unimp_unknown,		/* blki rh0, */
+  i_datai_rh0,
+  i_unimp_unknown,		/* blko rh0, */
+  i_datao_rh0,
+  i_cono_rh0,
+  i_coni_rh0,
+  i_consz_rh0,
+  i_conso_rh0,
+};
+
+struct dcb rh0dcb =
+{
+  NULL, NULL, NULL, NULL,
+  &rh0funcs
+};
+
 IO_INST(datao,rh0,540)
 {
   datao_rh20 (channels[0], ea);
@@ -1272,6 +1550,7 @@ process_receive_packet ()
   int packetlen;
   addr10 queue;
   word36 mem;
+  word36 cmdword;
   addr10 fqflink, rqblink, bufptr;
   addr10 bsdaddr, dataddr;
   int bsdlen;
@@ -1355,10 +1634,6 @@ process_receive_packet ()
 
       /* Have dequeued an input buffer.  Now, fill it up */
 
-      mem = zero36;
-      dpb (23, 8, 5, mem);	/* Opcode 5 == receive */
-      pstore (bufptr + 3, mem);
-
       /* Ethernet dest addr */
       dpb (7, 8, packet[0], mem);
       dpb (15, 8, packet[1], mem);
@@ -1419,7 +1694,7 @@ process_receive_packet ()
 	  pfetch (bsdaddr + 0, mem); /* Buffer address */
 	  dataddr = ldb (35, 22, mem);
 
-	  xferlen = bsdlen < packetlen ? bsdlen : packetlen;
+	  xferlen = min (bsdlen, packetlen);
 
 	  p = &packet[14];
 
@@ -1427,17 +1702,26 @@ process_receive_packet ()
 	    ic_to_word36 (p, memarray[dataddr]);
 	}
 
+      cmdword = zero36;
+
       if (packetlen > 0)
 	{
-/* Should really generate an error here.  */
+	  dpb (7, 6, (031 << 1) | 1, cmdword); /* Packet too long error code */
+
+#if 0
 	  printf ("Packet too long!  excess = %d, ", packetlen);
 	  printf ("%02x-%02x-%02x-%02x-%02x-%02x<-\
 %02x-%02x-%02x-%02x-%02x-%02x ",
 		  packet[0], packet[1], packet[2], packet[3], packet[4],
 		  packet[5], packet[6], packet[7], packet[8], packet[9],
 		  packet[10], packet[11]);
-	  printf ("Protocol: %02x=%02x\r\n", packet[12], packet[13]);
+	  printf ("Protocol: %02x-%02x\r\n", packet[12], packet[13]);
+#endif
 	}
+
+      dpb (23, 8, 5, cmdword);	/* Opcode 5 == receive */
+
+      pstore (bufptr + 3, cmdword); /* Install the command word and error code */
 
       /* Put the block on the end of response queue */
 
@@ -1804,6 +2088,32 @@ start_kni ()
   pfetch (physaddr, mem);	/* Get int vector */
 }
 
+static io_func_type i_datai_kni;
+static io_func_type i_blko_kni;
+static io_func_type i_datao_kni;
+static io_func_type i_cono_kni;
+static io_func_type i_coni_kni;
+static io_func_type i_consz_kni;
+static io_func_type i_conso_kni;
+
+static io_func_type *knifuncs[8] =
+{
+  i_unimp_unknown,		/* blki rh0, */
+  i_datai_kni,
+  i_blko_kni,
+  i_datao_kni,
+  i_cono_kni,
+  i_coni_kni,
+  i_consz_kni,
+  i_conso_kni,
+};
+
+struct dcb knidcb =
+{
+  NULL, NULL, NULL, NULL,
+  &knifuncs
+};
+
 IO_INST(cono,kni,564)		/* NIA20 */
 {
   if (kniconihi == 0)
@@ -1847,6 +2157,7 @@ IO_INST(cono,kni,564)		/* NIA20 */
       kniconihi &= ~040;	/* Clear disable complete */
       /* Enable receive process */
       signal (SIGUSR1, receive_ethernet_packet);
+      receive_ethernet_packet (); /* Prime the pump */
     }
 
   if ((ea ^ kniconilo) & 010)	/* Microprocessor run changing? */

@@ -21,7 +21,17 @@ SHELL= /bin/sh
 
 SRCDIR=@srcdir@
 
+# Optional flags:
+#	-DPCHIST - Turns on PC history buffer
+#	-DKLDCP - Make ^E console command start KLDDT at loc 10000
+#	-DDISK_PROFILE	- Generate stats on disk reads and write
+#	-DPC_PROFILE	- Generate stats on PC vm page cache
+
 CFLAGS=@CFLAGS@ -I.
+
+LIBS=@LIBS@
+
+LDFLAGS=@LDFLAGS@
 
 CC=@CC@
 
@@ -39,7 +49,7 @@ OBJS= kx10.o loadexe.o pager.o eacalc.o $(INSTR_OBJS) console.o interrupt.o disp
 ALL_OBJS=$(OBJS) ether_bpf.o ether_dummy.o ether_netbsd.o ether_snit.o
 
 kx10:	$(OBJS)
-	$(CC) $(CFLAGS) -o kx10 $(OBJS)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o kx10 $(OBJS) $(LIBS)
 
 dispatch.c:	$(INSTRS) $(SRCDIR)/gendisp
 	perl $(SRCDIR)/gendisp $(INSTRS)
@@ -56,6 +66,7 @@ i_txxx.c:	$(SRCDIR)/gentxxx
 i_skippy.c:	$(SRCDIR)/genskipjump
 	perl $(SRCDIR)/genskipjump > i_skippy.c
 
+# Only needed for Alpha/OSF-1*
 pfopen.o: /usr/examples/packetfilter/pfopen.c
 	$(CC) $(CFLAGS) -c /usr/examples/packetfilter/pfopen.c
 
@@ -87,6 +98,9 @@ ether_netbsd.o:	$(SRCDIR)/ether_netbsd.c
 
 ether_snit.o:	$(SRCDIR)/ether_snit.c
 	$(CC) $(CFLAGS) -c $(SRCDIR)/ether_snit.c
+
+ether_ultrix.o:	$(SRCDIR)/ether_ultrix.c
+	$(CC) $(CFLAGS) -c $(SRCDIR)/ether_ultrix.c
 
 i_arith.o:	$(SRCDIR)/i_arith.c
 	$(CC) $(CFLAGS) -c $(SRCDIR)/i_arith.c

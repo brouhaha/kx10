@@ -16,7 +16,6 @@
    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.  */
 
 #include "pdp10.h"
-extern void (*opdisp[01000])();
 
 void
 genunimp ()
@@ -90,6 +89,11 @@ SPECIAL_INST(unimp, 000)
     }
 
   genunimp();
+}
+
+SPECIAL_INST(io_unimp, 000)
+{
+  i_unimp (0700 | (opcode >> 4), ac, ea);
 }
 
 SPECIAL_INST(uuo, 0)
@@ -208,7 +212,7 @@ SPECIAL_INST(luuo, 001)
   opcode = ldb (8, 9, ir);
   ac = ldb (12, 4, ir);
   ea = ieacalc(ir, ea&SECTMASK); /* Calc ea in the section of the inst */
-  (*opdisp[opcode])(opcode, ac, ea); /* Recursively call the interpreter */
+  (*opdisp[opcode])(ac, ea); /* Recursively call the interpreter */
 }
 
 INST(pmove, 052)
@@ -224,7 +228,7 @@ INST(pmove, 052)
     }
   else
 #endif
-    i_uuo (opcode, ac, ea);
+    i_uuo (052, ac, ea);
 }
 
 INST(pmovem, 053)
@@ -240,16 +244,17 @@ INST(pmovem, 053)
     }
   else
 #endif
-    i_uuo (opcode, ac, ea);
+    i_uuo (053, ac, ea);
 }
 
 INST(uuo101, 0101)
 {
-  i_uuo (opcode, ac, ea);
+  i_uuo (0101, ac, ea);
 }
 
 INST(extend, 0123)
 {
+  int opcode;
   word36 tmp;
 
   vfetch (ea, tmp);
@@ -376,7 +381,7 @@ INST(jffo, 0243)
 
 INST(uuo247, 0247)
 {
-  i_uuo (opcode, ac, ea);
+  i_uuo (0247, ac, ea);
 }
 
 INST(blt, 0251)
@@ -519,7 +524,7 @@ INST(jrst, 0254)
 
       if (pcflags & (PC_USER | PC_PUBLIC)) /* User mode? */
 	{
-	  i_uuo (opcode, ac, ea);	/* Yes, bomb him out */
+	  i_uuo (0254, ac, ea);	/* Yes, bomb him out */
 	  return;
 	}
 
@@ -550,7 +555,7 @@ INST(jrst, 0254)
 #ifdef PCHIST
 	ppc ();
 #endif
-	i_uuo (opcode, ac, ea);
+	i_uuo (0254, ac, ea);
 	return;
       }
 
@@ -597,7 +602,7 @@ INST(jrst, 0254)
 
       if (pcflags & PC_USER)	/* User mode? */
 	{
-	  i_uuo (opcode, ac, ea); /* Yes, privileged instruction, bomb */
+	  i_uuo (0254, ac, ea); /* Yes, privileged instruction, bomb */
 	  return;
 	}
 
@@ -668,7 +673,7 @@ INST(jrst, 0254)
     return;
   case 010:			/* Just dismiss interrupt */
     if (pcflags & (PC_USER | PC_PUBLIC)) /* User mode? */
-      i_uuo (opcode, ac, ea);	/* Yes, privileged instruction, bomb */
+      i_uuo (0254, ac, ea);	/* Yes, privileged instruction, bomb */
     else
       finish_interrupt();	/* Clear current interrupt level */
     return;
@@ -708,6 +713,7 @@ INST(jfcl, 0255)
 
 INST(xct, 0256)
 {
+  int opcode;
   word36 ir;
   int func;
   extern int saved_pcsection;
@@ -751,7 +757,7 @@ INST(xct, 0256)
   if (func == 0 || pcflags & PC_USER) /* Normal xct or user mode */
     {
       ea = ieacalc(ir, ea&SECTMASK); /* Calc ea in the section of the inst */
-      (*opdisp[opcode])(opcode, ac, ea); /* Recursively call the interpreter */
+      (*opdisp[opcode])(ac, ea); /* Recursively call the interpreter */
       return;
     }
 
@@ -780,7 +786,7 @@ INST(xct, 0256)
 
   set_previous_context_func (func);
 
-  (*opdisp[opcode])(opcode, ac, ea);
+  (*opdisp[opcode])(ac, ea);
 
   pcsection = saved_pcsection;
   saved_pcsection = -1;

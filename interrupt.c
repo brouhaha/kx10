@@ -210,7 +210,7 @@ handle_interrupt ()
 	     location.  */
 
 	  oldpc = pc;
-	  (*opdisp[opcode]) (opcode, ac, ea); /* Recursively call the interpreter */
+	  (*opdisp[opcode]) (ac, ea); /* Recursively call the interpreter */
 
 	  if (oldpc != pc)
 	    {			/* It skipped.  Dismiss the interrupt. */

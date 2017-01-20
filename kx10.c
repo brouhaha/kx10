@@ -18,6 +18,9 @@
 /* The main emulator !!! */
 
 #include "pdp10.h"
+#include <sys/types.h>
+#include <sys/mman.h>
+#include <errno.h>
 
 #if 0
 word36 zero36 = {0,0};
@@ -34,6 +37,8 @@ int patch_monitor = 1;		/* != 0 means install dte patches */
 int waits_flag = 0;		/* != 0 means booting a Waits .dmp file */
 int icount, intcount;
 int boot_flags = 0;
+
+addr10 pc_cache_vm;
 
 /*static int __main () {return 0;}*/
 
@@ -64,6 +69,19 @@ handle_fpe ()
   printf("\r\nSIGFPE\r\n");
   genunimp ();
 }
+
+#ifdef PC_PROFILE
+static unsigned long pccount = 0;
+static unsigned long misscount = 0;
+
+void
+print_pccounts ()
+{
+  printf ("pccount = %d, misscount = %d, hit percentage %g",
+	  pccount, misscount, ((double)pccount - misscount)/pccount);
+  printf ("\r\n");
+}
+#endif /* PC_PROFILE */
 
 #if 0
 int
@@ -146,6 +164,8 @@ execute(start_address)
   while (1)
     {
       extern int trace_ubr;
+      addr10 pctmp;
+      word36 *pc_cache_mapping;
 
       if (interrupt >= 0)
 	{
@@ -185,7 +205,29 @@ execute(start_address)
 	section really refer to the ACs.
 	*/
 
+#if 1
+#ifdef PC_PROFILE
+      pccount++;
+#endif
+      pctmp = pcsection | pc;
+      if (pctmp & 0777760)
+	{
+	  if ((pctmp & KLPAGEMASK) != pc_cache_vm)
+	    {
+#ifdef PC_PROFILE
+	      misscount++;
+#endif
+	      pc_cache_mapping = vfetch_i_ref (pctmp);
+	      pc_cache_vm = pctmp & KLPAGEMASK;
+	    }
+
+	  ir = *(pc_cache_mapping + pctmp);
+	}
+      else
+	ir = mem_acref (pctmp);
+#else
       vfetch_i (pcsection | pc, ir);
+#endif
 
 #ifdef PROCESS_TRACING
       if (pagerdatailow == trace_ubr
@@ -201,7 +243,7 @@ execute(start_address)
       ea = ieacalc(ir, pcsection);
 
       opcode = ldb(8, 9, ir);
-      (*opdisp[opcode])(opcode, ldb(12, 4, ir), ea);
+      (*opdisp[opcode])(ldb(12, 4, ir), ea);
     }
 }
 
@@ -265,6 +307,16 @@ main (argc, argv)
 
   if (!waits_flag && (debug_monitor || patch_monitor))
     entvec = (addr10)0142;	/* Start address of EDDT */
+
+  {
+    int val;
+
+    fprintf (stderr, "[Locking down memarray, %d bytes]\n", sizeof memarray);
+
+    val = mlock ((caddr_t) memarray, sizeof memarray);
+    if (val)
+      fprintf (stderr, "[Failed to lock down memarray, errno = %d]\n", errno);
+  }
 
   fprintf (stderr, "[Starting at 0%o]\n", entvec);
   execute (entvec);

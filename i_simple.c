@@ -21,39 +21,6 @@
 
 #include "pdp10.h"
 
-INST(dadd, 0114)
-{
-  word36 mem0, mem1;
-
-  vfetch (ea, mem0);
-  ea = increa (ea);
-  vfetch (ea, mem1);
-
-  add72_flags (AC, ACplus1, mem0, mem1);
-
-  if (pcflags & PC_TRAP1)
-    setflags (0);
-}
-
-INST(dsub, 0115)
-{
-  word36 mem0, mem1;
-
-  vfetch (ea, mem0);
-  ea = increa (ea);
-  vfetch (ea, mem1);
-
-  not36 (mem0, mem0);
-  not36 (mem1, mem1);
-
-  incr72_flags (mem0, mem1);
-
-  add72_flags (AC, ACplus1, mem0, mem1);
-
-  if (pcflags & PC_TRAP1)
-    setflags (0);
-}
-
 INST(dmove, 0120)
 {
   word36 tmp, tmp1;
@@ -66,27 +33,6 @@ INST(dmove, 0120)
   ACplus1 = tmp1;
 }
 
-INST(dmovn, 0121)
-{
-  word36 mem0, mem1;
-
-  vfetch (ea, mem0);
-  ea = increa (ea);
-  vfetch (ea, mem1);
-
-  not36 (mem0, mem0);
-  not36 (mem1, mem1);
-
-  incr72_flags (mem0, mem1);
-  dpb (0, 1, 0, mem1);		/* Sign bit in 2nd word is always clear */
-
-  AC = mem0;
-  ACplus1 = mem1;
-
-  if (pcflags & PC_TRAP1)
-    setflags (0);
-}
-
 INST(dmovem, 0124)
 {
   word36 tmp, tmp1;
@@ -97,24 +43,6 @@ INST(dmovem, 0124)
   vstore (ea, tmp);
   ea = increa (ea);
   vstore (ea, tmp1);
-}
-
-INST(dmovnm, 0125)
-{
-  word36 mem0, mem1;
-
-  not36 (mem0, AC);
-  not36 (mem1, ACplus1);
-
-  incr72_flags (mem0, mem1);
-  dpb (0, 1, 0, mem1);		/* Sign bit in 2nd word is always clear */
-
-  vstore (ea, mem0);
-  ea = increa (ea);
-  vstore (ea, mem1);
-
-  if (pcflags & PC_TRAP1)
-    setflags (0);
 }
 
 INST(move, 0200)
@@ -313,7 +241,7 @@ INST(exch, 0250)
 {
   word36 tmp;
 
-  vfetch(ea, tmp);		/* Get memory contents */
-  vstore(ea, AC);	/* Store ac contents in memory */
-  AC = tmp;		/* Put memory into ac */
+  vfetch (ea, tmp);		/* Get memory contents */
+  vstore (ea, AC);		/* Store ac contents in memory */
+  AC = tmp;			/* Put memory into ac */
 }

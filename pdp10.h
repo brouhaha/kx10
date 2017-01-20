@@ -34,8 +34,25 @@
 
 sigjmp_buf to_main;
 
-#if 0
-#define PCHIST			/* PC history code */
+/* #define PCHIST */			/* PC history code */
+
+/* #define DISK_PROFILE		/* Disk I/O profiling code */
+
+#ifdef DISK_PROFILE
+void print_io_times PARAMS ((void));
+#else
+#define myread read
+#define mywrite write
+
+#define print_io_times()
+#endif
+
+/* #define PC_PROFILE */		/* Inst fetch profiling code */
+
+#ifdef PC_PROFILE
+void print_pccounts PARAMS ((void));
+#else
+#define print_pccounts()
 #endif
 
 typedef unsigned int addr10;
@@ -56,7 +73,9 @@ typedef union
 #define hi w.whi
 #define lo w.wlo
 
+#ifndef MEMPAGES
 #define MEMPAGES 3000
+#endif
 word36 memarray[MEMPAGES * 512]; /* Main memory */
 addr10 pc;			/* Program counter, low 18 bits */
 addr10 pcsection;		/* PC section number, shifted left 18 */
@@ -93,8 +112,7 @@ extern int setting_pc;
 
 #define page_to_word(PAGE) (PAGE << 9)
 
-extern void (*opdisp[01000])();
-extern void (*iodisp[02000])();
+extern void (*opdisp[01000]) PARAMS ((int ac, addr10 ea));
 
 /* Accumulators */
 word36 acfile[8 * 16];		/* ac's (8 blocks worth) */
@@ -151,27 +169,76 @@ int mtrconi;
 #define BLOCKEDSIGS {SIGIO, SIGALRM, SIGVTALRM, SIGUSR1}
 sigset_t blockedsigs;
 
+/* Device control block */
+
+#ifdef __STDC__
+struct dcb;
+#endif
+
+typedef void io_func_type PARAMS ((struct dcb *dcb, int dev, int opcode, addr10 ea));
+
+struct dcb
+{
+  int *hi_coni_ptr;
+  int *lo_coni_ptr;
+  int *hi_datai_ptr;
+  int *lo_datai_ptr;
+
+  io_func_type *(*funcs)[8];
+};
+
 /* Instruction prolog */
 
-#define INST(NAME, OPCODE) void \
-CONCAT (i_,NAME)(opcode, ac, ea) \
+#if 0
+#define INST(NAME, OPCODE) \
+void CONCAT (i_,NAME) PARAMS ((int opcode, int ac, addr10 ea)); \
+void CONCAT (i_,NAME)(opcode, ac, ea) \
        register int opcode, ac; \
        register addr10 ea;
 
-#define IO_INST(OP, DEVNAME, DEVCODE) void \
-CONCAT4 (i_,OP,_,DEVNAME)(opcode, ac, ea) \
+#define IO_INST(OP, DEVNAME, DEVCODE) \
+void CONCAT4 (i_,OP,_,DEVNAME) PARAMS ((int opcode, int ac, addr10 ea)); \
+void CONCAT4 (i_,OP,_,DEVNAME)(opcode, ac, ea) \
        register int opcode, ac; \
        register addr10 ea;
 
-#define SPECIAL_INST(NAME, OPCODE) void \
-CONCAT (i_,NAME)(opcode, ac, ea) \
+#define SPECIAL_INST(NAME, OPCODE) \
+void CONCAT (i_,NAME) PARAMS ((int opcode, int ac, addr10 ea)); \
+void CONCAT (i_,NAME)(opcode, ac, ea) \
        register int opcode, ac; \
        register addr10 ea;
 
-#define SPECIAL_IO_INST(OP, DEVNAME, DEVCODE) void \
-CONCAT4 (i_,OP,_,DEVNAME)(opcode, ac, ea) \
+#define SPECIAL_IO_INST(OP, DEVNAME, DEVCODE) \
+void CONCAT4 (i_,OP,_,DEVNAME) PARAMS ((int opcode, int ac, addr10 ea)); \
+void CONCAT4 (i_,OP,_,DEVNAME)(opcode, ac, ea) \
        register int opcode, ac; \
        register addr10 ea;
+#else
+#define INST(NAME, OPCODE) \
+void CONCAT (i_,NAME) PARAMS ((int ac, addr10 ea)); \
+void CONCAT (i_,NAME)(ac, ea) \
+       register int ac; \
+       register addr10 ea;
+
+#define IO_INST(OP, DEVNAME, DEVCODE) \
+io_func_type CONCAT4 (i_,OP,_,DEVNAME); \
+void CONCAT4 (i_,OP,_,DEVNAME)(dcb, dev, opcode, ea) \
+       struct dcb *dcb; \
+       int dev; \
+       int opcode; \
+       register addr10 ea;
+
+#define SPECIAL_INST(NAME, OPCODE) \
+void CONCAT (i_,NAME) PARAMS ((int opcode, int ac, addr10 ea)); \
+void CONCAT (i_,NAME)(opcode, ac, ea) \
+       register int opcode, ac; \
+       register addr10 ea;
+
+#define SPECIAL_IO_INST(OP, DEVNAME, DEVCODE) \
+void CONCAT4 (i_,OP,_,DEVNAME) PARAMS ((addr10 ea)); \
+void CONCAT4 (i_,OP,_,DEVNAME)(ea) \
+       register addr10 ea;
+#endif
 
 /* PAG device */
 
@@ -192,6 +259,8 @@ int pagerdatailow;		/* Lower 18 bits of pager datai */
 /* Page fault bits (shifted right by 9 to fit in 32 bit word) */
 #define PF_USER		0400000000
 #define PF_HARD		0200000000
+#define   PF_HARD_ERROR_MASK 0370000000
+#define   PF_AR_PARITY_ERROR 0360000000
 #define PF_ACCESSIBLE	0100000000
 #define PF_MODIFIED	0040000000
 #define PF_WRITEABLE	0020000000
@@ -212,8 +281,10 @@ int pagerdatailow;		/* Lower 18 bits of pager datai */
 #define ADDRMASK    07777777777
 #define KLADDRMASK  00037777777
 #define SECTMASK    07777000000
-#define KLPAGEMASK    037777
+#define KLPAGEMASK    037777000
 #define HWORDMASK   00000777777
+
+extern addr10 pc_cache_vm;
 
 /* Sign extend WORD.hi to 32 bit long */
 
@@ -244,13 +315,46 @@ int pagerdatailow;		/* Lower 18 bits of pager datai */
 
 /* This macro will convert 5 chars into a word36.  The first byte contains
  * the MSB of the word, and the last byte contains the least significant
- * four bits, right justified, high four bits must be 0.
+ * four bits, right justified, high four bits must be 0.  This is also known as
+ * core-dump mode.
  */
 
 #define string_to_word36(STRING, WORD) \
 	do { \
 	WORD.hi = (STRING)[0] << 10 | (STRING)[1] << 2 | (STRING)[2] >> 6; \
 	WORD.lo = ((STRING)[2] << 12 | (STRING)[3] << 4 | (STRING)[4]) & HWORDMASK; } while (0)
+
+/* Convert 9 bytes into 2 PDP-10 words.  This is known as high-density mode,
+   and is used on disks and tapes.
+ */
+
+/* Macro's to convert word offsets to byte offsets depending upon the mode.  */
+
+/* High-density is 4.5 bytes/word */
+#define HD_WORD_TO_BYTE(w) (((w) * 9) / 2)
+
+#define hd_to_word36(STRING, WORD0, WORD1) \
+  do { \
+    (WORD0).hi = (STRING)[0] << 10 | (STRING)[1] << 2 | (STRING)[2] >> 6; \
+    (WORD0).lo = ((STRING)[2] << 12 | (STRING)[3] << 4 | (STRING)[4] >> 4) & HWORDMASK; \
+    (WORD1).hi = ((STRING)[4] << 14 | (STRING)[5] << 6 | (STRING)[6] >> 2) & HWORDMASK; \
+    (WORD1).lo = ((STRING)[6] << 16 | (STRING)[7] << 8 | (STRING)[8]) & HWORDMASK; \
+  } while (0)
+
+/* Convert 2 PDP-10 words into 9 bytes in high-density mode. */
+
+#define word36_to_hd(WORD0, WORD1, STRING) \
+  do { \
+    (STRING)[0] = (WORD0).hi >> 10; \
+    (STRING)[1] = (WORD0).hi >> 2; \
+    (STRING)[2] = (WORD0).hi << 6 | (WORD0).lo >> 12; \
+    (STRING)[3] = (WORD0).lo >> 4; \
+    (STRING)[4] = (WORD0).lo << 4 | (WORD1).hi >> 14; \
+    (STRING)[5] = (WORD1).hi >> 6; \
+    (STRING)[6] = (WORD1).hi << 2 | (WORD1).lo >> 16; \
+    (STRING)[7] = (WORD1).lo >> 8; \
+    (STRING)[8] = (WORD1).lo; \
+  } while (0)
 
 /* Format 4 bytes into industry compatible mode.  */
 
@@ -820,6 +924,38 @@ int pagerdatailow;		/* Lower 18 bits of pager datai */
   (DSTHI).hi &= HWORDMASK;						\
 }
 
+#define neg144(D0, D1, D2, D3, S0, S1, S2, S3)				\
+{									\
+  (D3).lo = -(S3).lo;							\
+  (D3).hi = -((S3).hi & 0377777);					\
+									\
+  (D2).lo = -(S2).lo;							\
+  (D2).hi = -((S2).hi & 0377777);					\
+									\
+  (D1).lo = -(S1).lo;							\
+  (D1).hi = -((S1).hi & 0377777);					\
+									\
+  (D0).lo = -(S0).lo;							\
+  (D0).hi = -(S0).hi;							\
+									\
+  (D3).hi += ((signed int)(D3).lo >> 18);				\
+  (D2).lo += ((signed int)(D3).hi >> 17);				\
+  (D2).hi += ((signed int)(D2).lo >> 18);				\
+  (D1).lo += ((signed int)(D2).hi >> 17);				\
+  (D1).hi += ((signed int)(D1).lo >> 18);				\
+  (D0).lo += ((signed int)(D1).hi >> 17);				\
+  (D0).hi += ((signed int)(D0).lo >> 18);				\
+									\
+  (D3).lo &= HWORDMASK;							\
+  (D3).hi &= 0377777;							\
+  (D2).lo &= HWORDMASK;							\
+  (D2).hi &= 0377777;							\
+  (D1).lo &= HWORDMASK;							\
+  (D1).hi &= 0377777;							\
+  (D0).lo &= HWORDMASK;							\
+  (D0).hi &= HWORDMASK;							\
+}
+
 /* test a word, and return whether it's < > or == to 0 */
 
 #define gt36(WORD) (!le36(WORD))			/* >  0 */
@@ -887,6 +1023,7 @@ void console_reset PARAMS ((void));
 void suspend PARAMS ((void));
 
 void Vfetch_i PARAMS ((addr10 loc, word36 *word));
+word36 *vfetch_i_ref PARAMS ((addr10 loc));
 void Vfetch_ea PARAMS ((addr10 loc, word36 *word));
 void Vfetch PARAMS ((addr10 loc, word36 *word));
 void Vfetch_1 PARAMS ((addr10 loc, word36 *word));

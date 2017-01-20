@@ -20,32 +20,29 @@
 
 int setting_pc = 0;
 
+struct tlbent
+{
+  word36 *read_pointer;
+  word36 *write_pointer;
+};
+
 struct tlb
 {
   int high_water;
   int user;			/* 1 if user mode, 0 if kernel */
-  word36 *read_pointers[32*512];
-  word36 *write_pointers[32*512];
-  unsigned int tlb[32*512];
+  struct tlbent tlbents[32 * 512];
+  unsigned int tlb[32 * 512];
 };
 
 static struct tlb kernel_tlb;
 static struct tlb user_tlb;
 
-static word36 **current_read_tlb;
-static word36 **current_write_tlb;
 static struct tlb *current_tlb;
 
-static word36 **current_read_tlb_ea;
-static word36 **current_write_tlb_ea;
 static struct tlb *current_tlb_ea;
 
-static word36 **current_read_tlb_1;
-static word36 **current_write_tlb_1;
 static struct tlb *current_tlb_1;
 
-static word36 **current_read_tlb_2;
-static word36 **current_write_tlb_2;
 static struct tlb *current_tlb_2;
 
 int saved_pcsection = -1;
@@ -53,42 +50,29 @@ int saved_pcsection = -1;
 void
 gouser ()
 {
-  current_read_tlb = user_tlb.read_pointers;
-  current_write_tlb = user_tlb.write_pointers;
   current_tlb = &user_tlb;
 
-  current_read_tlb_ea = user_tlb.read_pointers;
-  current_write_tlb_ea = user_tlb.write_pointers;
   current_tlb_ea = &user_tlb;
 
-  current_read_tlb_1 = user_tlb.read_pointers;
-  current_write_tlb_1 = user_tlb.write_pointers;
   current_tlb_1 = &user_tlb;
 
-  current_read_tlb_2 = user_tlb.read_pointers;
-  current_write_tlb_2 = user_tlb.write_pointers;
   current_tlb_2 = &user_tlb;
+
+  pc_cache_vm = -1;
 }
 
 void
 goexec ()
 {
-  current_read_tlb = kernel_tlb.read_pointers;
-  current_write_tlb = kernel_tlb.write_pointers;
   current_tlb = &kernel_tlb;
 
-  current_read_tlb_ea = kernel_tlb.read_pointers;
-  current_write_tlb_ea = kernel_tlb.write_pointers;
   current_tlb_ea = &kernel_tlb;
 
-  current_read_tlb_1 = kernel_tlb.read_pointers;
-  current_write_tlb_1 = kernel_tlb.write_pointers;
   current_tlb_1 = &kernel_tlb;
 
-  current_read_tlb_2 = kernel_tlb.read_pointers;
-  current_write_tlb_2 = kernel_tlb.write_pointers;
   current_tlb_2 = &kernel_tlb;
 
+  pc_cache_vm = -1;
 }
 
 void
@@ -100,8 +84,6 @@ set_previous_context_func (func)
       mem_acblock_1 = prevacblock;
       if (pcflags & PC_PCU)
 	{
-	  current_read_tlb_1 = user_tlb.read_pointers;
-	  current_write_tlb_1 = user_tlb.write_pointers;
 	  current_tlb_1 = &user_tlb;
 	}
     }
@@ -111,20 +93,14 @@ set_previous_context_func (func)
       ea_acblock = prevacblock;
       if (pcflags & PC_PCU)
 	{
-	  current_read_tlb_2 = user_tlb.read_pointers;
-	  current_write_tlb_2 = user_tlb.write_pointers;
 	  current_tlb_2 = &user_tlb;
 
-	  current_read_tlb_ea = user_tlb.read_pointers;
-	  current_write_tlb_ea = user_tlb.write_pointers;
 	  current_tlb_ea = &user_tlb;
 	}
     }
   else
     {
       ea_acblock = currentacblock;
-      current_read_tlb_ea = kernel_tlb.read_pointers;
-      current_write_tlb_ea = kernel_tlb.write_pointers;
       current_tlb_ea = &kernel_tlb;
     }
 
@@ -133,8 +109,6 @@ set_previous_context_func (func)
       mem_acblock = prevacblock;
       if (pcflags & PC_PCU)
 	{
-	  current_read_tlb = user_tlb.read_pointers;
-	  current_write_tlb = user_tlb.write_pointers;
 	  current_tlb = &user_tlb;
 	}
     }
@@ -157,8 +131,6 @@ set_previous_eacalc ()
   ea_acblock = prevacblock;
   if (pcflags & PC_PCU)
     {
-      current_read_tlb_ea = user_tlb.read_pointers;
-      current_write_tlb_ea = user_tlb.write_pointers;
       current_tlb_ea = &user_tlb;
     }
 }
@@ -174,12 +146,18 @@ clear_tlb (clear_keep)
 
   if (clear_keep)
     {
+#if 0
       for (i = 0; i < tlb->high_water; i++)
 	{
 	  tlb->read_pointers[i] = 0;
 	  tlb->write_pointers[i] = 0;
 	  tlb->tlb[i] = 0;
 	}
+#else
+      i = tlb->high_water * sizeof (struct tlbent);
+      bzero (tlb->tlbents, i);
+      bzero (tlb->tlb, tlb->high_water * sizeof (tlb->tlb[0]));
+#endif
       tlb->high_water = 0;
     }
   else
@@ -188,21 +166,29 @@ clear_tlb (clear_keep)
 	{
 	  if (tlb->tlb[i] & PF_KEEP)
 	    continue;
-	  tlb->read_pointers[i] = 0;
-	  tlb->write_pointers[i] = 0;
+	  tlb->tlbents[i].read_pointer = 0;
+	  tlb->tlbents[i].write_pointer = 0;
 	  tlb->tlb[i] = 0;
 	}
     }
 
   tlb = &user_tlb;
 
+#if 0
   for (i = 0; i < tlb->high_water; i++)
     {
       tlb->read_pointers[i] = 0;
       tlb->write_pointers[i] = 0;
       tlb->tlb[i] = 0;
     }
+#else
+  i = tlb->high_water * sizeof (struct tlbent);
+  bzero (tlb->tlbents, i);
+  bzero (tlb->tlb, tlb->high_water * sizeof (tlb->tlb[0]));
+#endif
   tlb->high_water = 0;
+
+  pc_cache_vm = -1;
 }
 
 void
@@ -294,7 +280,7 @@ setflags (newflags)
   opcode = ldb (8, 9, ir);
   ac = ldb (12, 4, ir);
   ea = ieacalc(ir, pcsection);	/* Calc ea in the section of the inst */
-  (*opdisp[opcode])(opcode, ac, ea); /* Recursively call the interpreter */
+  (*opdisp[opcode])(ac, ea); /* Recursively call the interpreter */
 
   trapflags = 0;
 }
@@ -322,7 +308,11 @@ hard_fault (loc, pageinfo, user, is_pc)
 
   if ((pageinfo & (PF_HARD | PF_ACCESSIBLE)) == PF_ACCESSIBLE
       && (pageinfo & PF_PAGE) >= MEMPAGES)
-    set_nxm(loc, pageinfo);	/* Set non-existant memory indication */
+    {
+      pageinfo &= ~PF_HARD_ERROR_MASK;
+      pageinfo |= PF_AR_PARITY_ERROR;
+      set_nxm(loc, pageinfo);	/* Set non-existant memory indication */
+    }
 
   if (user)
     pageinfo |= PF_USER;
@@ -656,9 +646,11 @@ clrpt(loc)
   unsigned int pagenum;
 
   pagenum = (loc & KLADDRMASK) >> 9;
-  *(current_read_tlb + pagenum) = 0;
-  *(current_write_tlb + pagenum) = 0;
+  current_tlb->tlbents[pagenum].read_pointer = 0;
+  current_tlb->tlbents[pagenum].write_pointer = 0;
   current_tlb->tlb[pagenum] = 0;
+  if (((pcsection | pc) & KLPAGEMASK) == pc_cache_vm)
+    pc_cache_vm = -1;
 }
 
 static word36 *
@@ -693,11 +685,11 @@ read_refill(loc, tlb, is_pc)
 
       physaddr = memarray + ((pageinfo & PF_PAGE) << 9)	- (loc & 037777000);
 
-      *(tlb->read_pointers + pagenum) = physaddr;
+      tlb->tlbents[pagenum].read_pointer = physaddr;
 
       /* Come here when reference should succeed */
 
-      return *(tlb->read_pointers + pagenum);
+      return tlb->tlbents[pagenum].read_pointer;
     }
   else
     hard_fault (loc, pageinfo, tlb->user, is_pc);
@@ -737,13 +729,13 @@ write_refill(loc, tlb)
 
       physaddr = memarray + ((pageinfo & PF_PAGE) << 9)	- (loc & 037777000);
 
-      *(tlb->write_pointers + pagenum) = physaddr;
+      tlb->tlbents[pagenum].write_pointer = physaddr;
 
-      *(tlb->read_pointers + pagenum) = physaddr;
+      tlb->tlbents[pagenum].read_pointer = physaddr;
 
       /* Come here when reference should succeed */
 
-      return *(tlb->write_pointers + pagenum);
+      return tlb->tlbents[pagenum].write_pointer;
     }
   else
     hard_fault(loc, pageinfo | PF_WRITEREF, tlb->user, 0);
@@ -757,21 +749,42 @@ Vfetch_i(loc, word)
   register unsigned int pagenum;
   word36 *tlb_ent;
 
+#if 0
   if (loc > KLADDRMASK)
     hard_fault (loc, PF_HARD | (7 << 21), current_tlb->user, 1);
+#endif
 
-  if (is_acref(loc))
-    *word = mem_acref(loc);
-  else
-    {
-      loc &= KLADDRMASK;
-      pagenum = loc >> 9;
-      tlb_ent = *(current_read_tlb + pagenum);
+  if (loc & 0777760)		/* section local address? */
+    {				/* No, do it the hard way */
+      pagenum = (loc >> 9) & (KLPAGEMASK >> 9);
+      tlb_ent = current_tlb->tlbents[pagenum].read_pointer;
 
-      if (tlb_ent == 0)
-	tlb_ent = read_refill(loc, current_tlb, 1);
-      *word = *(tlb_ent + loc);
+      if (tlb_ent != 0)
+	*word = *(tlb_ent + loc);
+      else
+	{
+	  tlb_ent = read_refill(loc, current_tlb, 1);
+	  *word = *(tlb_ent + loc);
+	}
     }
+  else
+    *word = mem_acref(loc);
+}
+
+word36 *
+vfetch_i_ref (loc)
+     register addr10 loc;
+{
+  register unsigned int pagenum;
+  word36 *tlb_ent;
+
+  pagenum = (loc >> 9) & (KLPAGEMASK >> 9);
+  tlb_ent = current_tlb->tlbents[pagenum].read_pointer;
+
+  if (tlb_ent != 0)
+    return tlb_ent;
+  else
+    return read_refill(loc, current_tlb, 1);
 }
 
 void
@@ -788,7 +801,7 @@ Vfetch(loc, word)
     {
       loc &= KLADDRMASK;
       pagenum = loc >> 9;
-      tlb_ent = *(current_read_tlb + pagenum);
+      tlb_ent = current_tlb->tlbents[pagenum].read_pointer;
 
       if (tlb_ent == 0)
 	tlb_ent = read_refill(loc, current_tlb, 0);
@@ -810,11 +823,37 @@ Vstore(loc, word)
     {
       loc &= KLADDRMASK;
       pagenum = loc >> 9;
-      tlb_ent = *(current_write_tlb + pagenum);
+      tlb_ent = current_tlb->tlbents[pagenum].write_pointer;
 
       if (tlb_ent == 0)
 	tlb_ent = write_refill(loc, current_tlb);
       *(tlb_ent + loc) = *word;
+    }
+}
+
+/* Return a pointer to the physical memory associated with LOC.  This function
+   makes sure that the location is read/write.  If not, it faults.  This could
+   be used to speed up code that makes several references to the same page by
+   avoiding some calls into the VM system.  */
+
+word36 *
+vref_rw (loc)
+     register addr10 loc;
+{
+  register unsigned int pagenum;
+  word36 *tlb_ent;
+
+  if (is_acref(loc))
+   return &mem_acref (loc);
+  else
+    {
+      loc &= KLADDRMASK;
+      pagenum = loc >> 9;
+      tlb_ent = current_tlb->tlbents[pagenum].write_pointer;
+
+      if (tlb_ent == 0)
+	tlb_ent = write_refill(loc, current_tlb);
+      return tlb_ent + loc;
     }
 }
 
@@ -832,7 +871,7 @@ Vfetch_ea(loc, word)
     {
       loc &= KLADDRMASK;
       pagenum = loc >> 9;
-      tlb_ent = *(current_read_tlb_ea + pagenum);
+      tlb_ent = current_tlb_ea->tlbents[pagenum].read_pointer;
 
       if (tlb_ent == 0)
 	tlb_ent = read_refill(loc, current_tlb_ea, 0);
@@ -854,7 +893,7 @@ Vfetch_1(loc, word)
     {
       loc &= KLADDRMASK;
       pagenum = loc >> 9;
-      tlb_ent = *(current_read_tlb_1 + pagenum);
+      tlb_ent = current_tlb_1->tlbents[pagenum].read_pointer;
 
       if (tlb_ent == 0)
 	tlb_ent = read_refill(loc, current_tlb_1, 0);
@@ -876,7 +915,7 @@ Vstore_1(loc, word)
     {
       loc &= KLADDRMASK;
       pagenum = loc >> 9;
-      tlb_ent = *(current_write_tlb_1 + pagenum);
+      tlb_ent = current_tlb_1->tlbents[pagenum].write_pointer;
 
       if (tlb_ent == 0)
 	tlb_ent = write_refill(loc, current_tlb_1);
@@ -898,7 +937,7 @@ Vfetch_2(loc, word)
     {
       loc &= KLADDRMASK;
       pagenum = loc >> 9;
-      tlb_ent = *(current_read_tlb_2 + pagenum);
+      tlb_ent = current_tlb_2->tlbents[pagenum].read_pointer;
 
       if (tlb_ent == 0)
 	tlb_ent = read_refill(loc, current_tlb_2, 0);
@@ -920,7 +959,7 @@ Vstore_2(loc, word)
     {
       loc &= KLADDRMASK;
       pagenum = loc >> 9;
-      tlb_ent = *(current_write_tlb_2 + pagenum);
+      tlb_ent = current_tlb_2->tlbents[pagenum].write_pointer;
 
       if (tlb_ent == 0)
 	tlb_ent = write_refill(loc, current_tlb_2);

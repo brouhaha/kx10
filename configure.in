@@ -16,27 +16,50 @@ AC_CHECK_HEADERS(fcntl.h sgtty.h sys/file.h sys/ioctl.h sys/time.h termio.h unis
 
 dnl Set system dependent compiler options
 
-case ${CC}X${host_os} in
-ccXirix*) CFLAGS="-O -woff 848 -common" ;;
-cc*) CFLAGS=-O ;;
+case ${CC}X${host_os}X${host_cpu} in
+ccXirix*)
+	CFLAGS="-O -woff 848 -common"
+	;;
+gccXultrix4*)
+	CFLAGS="-O -g"
+	LIBS="-lresolv -l44bsd"
+	;;
+gccX*[[345]]86*)
+	CFLAGS="-O -m486 -fomit-frame-pointer -g"
+	;;
+cc*)
+	CFLAGS=-O
+	;;
 esac
 
 dnl System dependent options
+
+ETHER_OBJS=ether_dummy.o
 
 case ${host_os} in
 irix*)
 	AC_DEFINE(USE_STREAMS)
 	AC_DEFINE(_BSD_COMPAT)
-	ETHER_OBJS=ether_dummy.o
 	;;
-netbsd* | bsdi* | freebsd*) ETHER_OBJS=ether_netbsd.o ;;
-osf*)	ETHER_OBJS="ether_bpf.o pfopen.o" ;;
-sunos*)	ETHER_OBJS=ether_snit.o ;;
+netbsd* | bsdi* | freebsd*)
+	ETHER_OBJS=ether_netbsd.o
+	;;
+osf*)
+	ETHER_OBJS=ether_bpf.o
+	AC_CHECK_LIB(c, pfopen,,[ETHER_OBS=${ETHER_OBS} pfopen.o])
+	;;
+sunos*)
+	ETHER_OBJS=ether_snit.o
+	;;
 solaris*)
 	AC_DEFINE(USE_STREAMS)
-	ETHER_OBJS=ether_dummy.o
 	;;
-*)	ETHER_OBJS=ether_dummy.o ;;
+ultrix4*)
+	ETHER_OBJS=ether_ultrix.o
+	;;
+sysv4*)
+	AC_DEFINE(USE_STREAMS)
+	;;
 esac
 
 AC_SUBST(ETHER_OBJS)

@@ -192,7 +192,7 @@ ppc ()
 /* Print out a 36 bit memory location */
 
 void
-pl(ea)
+pl36(ea)
      addr10 ea;
 {
   word36 tmp;

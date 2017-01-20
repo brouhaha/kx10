@@ -56,13 +56,12 @@ INST(pushj, 0260)
   int count;
   addr10 addr;
 
-  tmp = zero36;
-
   count = upper18(AC);
 
   if (pcsection && count <= 0377777 && count != 0)
     {
-      dpb(35, 30, (pcsection | pc), tmp); /* 30 bit pc for non-zero sections */
+      dpb (35, 30, (pcsection | pc), tmp); /* 30 bit pc for non-zero sections */
+      dpb (5, 6, 0, tmp);
 
       addr = (ldb(35, 30, AC) + 1) | GLOBAL;
       vstore(addr, tmp);
@@ -72,11 +71,14 @@ INST(pushj, 0260)
     {
       if (!pcsection)
 	{
-	  dpb(12, 13, pcflags, tmp); /* Generate PC and flags for sect 0 */
-	  dpb(35, 18, pc, tmp);
+	  dpb (17, 18, pcflags << 5, tmp); /* Generate PC and flags for sect 0 */
+	  dpb (35, 18, pc, tmp);
 	}
       else
-	dpb(35, 30, (pcsection | pc), tmp); /* 30 bit pc for non-zero sections */
+	{
+	  dpb (35, 30, (pcsection | pc), tmp); /* 30 bit pc for non-zero sections */
+	  dpb (5, 6, 0, tmp);
+	}
 
       count++;			/* Inc counter and addr, defaulting section */
       addr = pcsection | ((lower18 (AC) + 1) & HWORDMASK);
